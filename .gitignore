@@ -1,0 +1,45 @@
+# Virtual Machine large image files
+*.ova
+*.vdi
+*.vmdk
+*.iso
+Tablut.ova
+
+# Compiled Java class files and build directories
+*.class
+build/
+bin/
+out/
+target/
+
+# Package Files
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# Logs and runtime artifacts
+logs/
+*.log
+*.tmp
+
+# Eclipse IDE
+.metadata
+.settings/
+.project
+.classpath
+*.launch
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+
+# Visual Studio Code
+.vscode/
+
+# OS specific files
+.DS_Store
+Thumbs.db
+desktop.ini
