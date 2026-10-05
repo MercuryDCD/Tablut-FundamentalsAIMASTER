@@ -86,26 +86,41 @@ The baseline framework provided by the professors is located in [`TablutCompetit
 
 ## 4. Execution Environment & Technical Constraints
 
+> [!CAUTION]
+> ### MANDATORY PRE-CHANGE ARCHITECTURAL GUARDRAILS
+> Every pull request, code modification, and architectural decision **MUST** comply with the following constraints before being merged. Disregarding any of these points will result in automatic disqualification or fatal execution failure during official tournament evaluation.
+
 ### 4.1 Competition VM & Hardware Specs
-* **VM Image:** Debian Linux 64-bit (VirtualBox).
+* **VM Image:** Debian Linux 64-bit (VirtualBox appliance).
 * **Hardware:** 4 vCPUs, 8 GB RAM, 30 GB storage.
-* **No GPU:** Exclusively CPU execution.
-* **No Internet Access:** During tournament matches, the VM has no internet connection. All dependencies, libraries, and binaries must be pre-installed and self-contained locally.
-* **Disk Space Limit:** Do not generate verbose logs on stdout/stderr or log files that could fill up disk space.
+* **Exclusively CPU Execution (NO GPU):** At runtime inside the VM, **no GPU is available**. All inference, search algorithms, matrix math, or heuristics must execute efficiently on pure x86-64 CPU cores.
+* **Strictly Isolated (NO INTERNET ACCESS):** During tournament matches, the VM has **zero internet connectivity**. All libraries, bytecode, dependencies, opening books, and data files must be completely self-contained and pre-packaged locally. Any attempt to download dependencies or query external endpoints will crash the process.
+* **Disk Space Limit:** Do not generate verbose logs on stdout/stderr or write sprawling log files. The evaluation framework penalizes and kills players that saturate disk space.
 
 ### 4.2 Time Budget & Computation Constraints
-* **Move Timeout:** Maximum **60 seconds** per move (configurable via CLI parameter; timeouts cause immediate forfeiture).
-* **Adversary Turn Rule:** **No computational activity is allowed during the opponent's turn.** The process must remain blocked on socket read.
+* **Move Timeout:** Maximum **60 seconds** per move. Note that the referee server can configure shorter timeouts (e.g., 30s or 15s). The agent **must dynamically respect the `<TIMEOUT_SECONDS>` CLI parameter** and safely terminate search within $85\% - 90\%$ of the budget. Exceeding the timeout causes immediate forfeit.
+* **Adversary Turn Rule (CRITICAL):** **NO COMPUTATIONAL ACTIVITY IS ALLOWED DURING THE OPPONENT'S TURN.** The agent process must strictly block on the TCP socket read (`in.read()`). Any background threads, asynchronous pondering, or speculative evaluation while waiting for the opponent's move violates the official tournament rules.
 
-### 4.3 Command-Line Interface (CLI)
-The agent must be executable via a single script at a fixed VM path:
+### 4.3 Command-Line Interface (CLI) & Environment Requirements
+The agent must be executable via a single shell script located at a fixed path in the VM:
 ```bash
 /home/tablut/tablut/runmyplayer.sh <ROLE> <TIMEOUT_SECONDS> <SERVER_IP>
 ```
-* Mandatory parameters (in exact order):
-  1. `<ROLE>`: `WHITE` or `BLACK` (**case-insensitive**, e.g., `white`, `White`, `WHITE`).
-  2. `<TIMEOUT_SECONDS>`: Integer specifying the maximum allowed search time per move.
-  3. `<SERVER_IP>`: IP address of the referee server (e.g., `127.0.0.1`, `192.168.20.101`).
+* Mandatory parameters (in exact positional order):
+  1. `<ROLE>`: `WHITE` or `BLACK` (**STRICTLY CASE-INSENSITIVE**, e.g., `white`, `White`, `WHITE`, `wHitE`).
+  2. `<TIMEOUT_SECONDS>`: Integer specifying the maximum allowed decision time per move in seconds.
+  3. `<SERVER_IP>`: IP address of the referee server (cannot be hardcoded to `localhost` or `127.0.0.1`).
+* **POSIX / LF Line Endings:** The script `runmyplayer.sh` must be saved with Unix Line Feeds (`LF`), not Windows `CRLF`, and must have executable permissions (`chmod +x`).
+
+### 4.4 Pre-Change Verification Checklist
+Before implementing or committing any changes, verify:
+- [ ] Does this run 100% on CPU without requiring GPU acceleration?
+- [ ] Does this run completely offline without downloading external assets or packages?
+- [ ] Does the agent halt all CPU threads during the opponent's turn, blocking purely on socket read?
+- [ ] Does the search engine respect dynamic timeouts smaller than 60s and cut off safely before the limit?
+- [ ] Does the memory usage stay well under 8 GB RAM with minimal garbage collector pressure?
+- [ ] Does stdout/stderr avoid flooding logs to prevent disk saturation?
+- [ ] Are all scripts formatted with Unix `LF` line endings?
 
 ---
 
