@@ -13,6 +13,11 @@ This repository contains the development of an autonomous Artificial Intelligenc
 * **Strict English Requirement:** All **source code, variable/class names, comments, docstrings, commit messages, documentation, and prompt interactions within the codebase MUST be in English**.
 * **Educational Focus (Strict):** The primary goal is for the student to master fundamental AI concepts through practical implementation. Every architectural decision, algorithm, data structure, and heuristic must be explained step-by-step, including the underlying theory and rationale.
 
+### 1.3 Repository & Remote Tracking
+* **GitHub Repository:** [`https://github.com/MercuryDCD/Tablut-FundamentalsAIMASTER`](https://github.com/MercuryDCD/Tablut-FundamentalsAIMASTER)
+* **Default Branch:** `main`
+* **Remote Tracking URL:** `https://github.com/MercuryDCD/Tablut-FundamentalsAIMASTER.git`
+
 ---
 
 ## 2. Starter Code & Provided Framework
