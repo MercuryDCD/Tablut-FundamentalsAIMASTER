@@ -11,7 +11,8 @@ This repository contains the development of an autonomous Artificial Intelligenc
 ### 1.2 Language & Collaboration Standards
 * **Working Language:** The project is developed collaboratively with international team members.
 * **Strict English Requirement:** All **source code, variable/class names, comments, docstrings, commit messages, documentation, and prompt interactions within the codebase MUST be in English**.
-* The idea of this project is for the student to learn, he doesnt know much about AI and machine learning, or about anything about a project like this one. Remember, the focus is to learn, so explain every single thing you do, and the reason behind it.
+* **Educational Focus (Strict):** The primary goal is for the student to master fundamental AI concepts through practical implementation. Every architectural decision, algorithm, data structure, and heuristic must be explained step-by-step, including the underlying theory and rationale.
+
 ---
 
 ## 2. Starter Code & Provided Framework
@@ -124,49 +125,97 @@ The agent must be executable via a single script at a fixed VM path:
 
 ---
 
-## 6. Target Architecture & Algorithmic Strategy
+## 6. Selected Architecture: Option 1 (Hybrid Classic Engine + Remote Tuning Pipeline)
+
+The chosen approach combines a **high-performance classical search engine written in Java** (with an **Opening Book** and **parameterized heuristics**) with an **offline parameter-tuning pipeline executed on a remote compute server via SSH**.
 
 ```
-+-------------------------------------------------------------------------+
-|                              TABLUT AGENT                               |
-|                                                                         |
-|  +---------------------+      +---------------------------------------+  |
-|  |   Network Client    | <--> |            Game Controller            |  |
-|  |  (TCP Sockets/JSON) |      |        (Turn loop & VM interface)     |  |
-|  +---------------------+      +---------------------------------------+  |
-|                                                  |                      |
-|                               +------------------v--------------------+  |
-|                               |          Search Engine                |  |
-|                               | (Iterative Deepening + Alpha-Beta/PVS)|  |
-|                               +---------------------------------------+  |
-|                                       /            |             \       |
-|            +-------------------------+      +------+-------+      +----+ |
-|            |                                |              |           | |
-|  +---------v-----------+          +---------v----+  +------v-----+     | |
-|  | State Representation|          | Transposition|  | Heuristics |     | |
-|  | (Bitboards / Zobrist|          |    Table     |  | Evaluation |     | |
-|  |  Fast Move Gen)     |          | (Hash TT/PVS)|  |  Engine    |     | |
-|  +---------------------+          +--------------+  +------------+     | |
-|                                                                          |
-+-------------------------------------------------------------------------+
++---------------------------------------------------------------------------------------+
+|                                    TABLUT ENGINE                                      |
+|                                                                                       |
+|  [Early Game: Turns 1-5]                                                              |
+|  ┌────────────────────────────────────────────────────────┐                           |
+|  │                 Opening Book (Zobrist Hash)            │ ──> Instant Move (<1ms)   |
+|  └───────────────────────────┬────────────────────────────┘                           |
+|                              │ (Book Exit)                                            |
+|  [Mid/Late Game: Search]     ▼                                                        |
+|  ┌─────────────────────────────────────────────────────────────────────────────────┐  |
+|  │                      Iterative Deepening Search (IDS)                           │  |
+|  │              + Strict Time Management (85-90% safe timeout cutoff)              │  |
+|  │                                                                                 │  |
+|  │   ┌─────────────────────────────────────────────────────────────────────────┐   │  |
+|  │   │      Principal Variation Search (PVS) / Negamax Alpha-Beta              │   │  |
+|  │   │  - Transposition Table (Zobrist Hashing)                                │   │  |
+|  │   │  - Move Ordering (PV Move, Winning Moves, Captures, Killers, History)   │   │  |
+|  │   │  - Quiescence Search (Captures stability)                               │   │  |
+|  │   └────────────────────────────────────┬────────────────────────────────────┘   │  |
+|  └────────────────────────────────────────┼────────────────────────────────────────┘  |
+|                                           ▼                                           |
+|  ┌─────────────────────────────────────────────────────────────────────────────────┐  |
+|  │                        Parameterized Heuristic Engine                           │  |
+|  │              Score(S) = w_1 * f_1(S) + w_2 * f_2(S) + ... + w_n * f_n(S)        │  |
+|  └─────────────────────────────────────────────────────────────────────────────────┘  |
++---------------------------------------------------------------------------------------+
+                                            ▲
+                                            │ Weights (w_1 ... w_n)
+                                            │
++-------------------------------------------┴-------------------------------------------+
+|                          REMOTE TUNING PIPELINE (SSH to Madrid)                       |
+|                                                                                       |
+|   1. Compile Headless Simulator (FastState vs FastState)                              |
+|   2. Run SPSA / Genetic Algorithm / Self-Play Tournaments (thousands of games)        |
+|   3. Export Optimal Weight Vector -> Update Java Heuristic constants                  |
++---------------------------------------------------------------------------------------+
 ```
 
-### 6.1 State Representation & Move Generation
-* Highly optimized state representation (e.g., bitboards or compact byte structures) for maximum Nodes Per Second ($NPS$).
-* Zobrist Hashing for $O(1)$ state hashing, Transposition Table lookup, and repetition detection.
+---
 
-### 6.2 Search Engine
-* **Iterative Deepening Search (IDS)** with strict time-management check (safe cutoff at 85–90% of turn timeout).
-* **Alpha-Beta Pruning / Negamax / Principal Variation Search (PVS)**.
-* **Move Ordering:** Transposition table best move, capture moves, killer moves, and history heuristic.
-* **Quiescence Search:** Mitigates the horizon effect on tactical captures.
+## 7. Educational Roadmap & Development Pipeline
 
-### 6.3 Evaluation Heuristics
-* **White:**
-  * King escape distance and open corridors / unblocked diagonals and orthogonal lines.
-  * Escape threats and double-threat forks (unblockable escape paths).
-  * King mobility and defensive guard integrity.
-* **Black:**
-  * Encirclement metrics (quadrant containment, perimeter blockade).
-  * Camp occupancy and tactical control of critical access columns/rows.
-  * Prevention of White escape forks.
+Development follows progressive, pédagogical phases: from basic data structures to advanced competitive optimization.
+
+### Phase 1: Core Domain & High-Speed State Representation
+* **Educational Objective:** Understand state-space representation, memory allocation overhead, and why standard Object-Oriented representations are too slow for game trees.
+* **Deliverables:**
+  * `Bitboard.java` or `FastState.java`: Compact representation of the 9x9 board using bit manipulation (`long`) or flat byte arrays (`byte[81]`).
+  * `MoveGenerator.java`: Legal move generation for Ashton Tablut rules (orthogonal slides, camp exceptions, throne anvil, custodian captures).
+  * `ZobristHash.java`: $O(1)$ state hashing with XOR operations for transposition lookup and cycle detection.
+  * `PerftTest.java`: Performance test counting total leaf nodes at depths $1, 2, 3, 4$ to verify correctness against [`GameAshtonTablut.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/TablutCompetition-master/Tablut/src/it/unibo/ai/didattica/competition/tablut/domain/GameAshtonTablut.java).
+
+### Phase 2: Search Engine & Socket Client Integration
+* **Educational Objective:** Understand Minimax, the mathematical principle of Alpha-Beta pruning, and practical time management.
+* **Deliverables:**
+  * `AgentClient.java`: Concrete implementation extending [`TablutClient.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/TablutCompetition-master/Tablut/src/it/unibo/ai/didattica/competition/tablut/client/TablutClient.java), parsing CLI parameters (`<ROLE> <TIMEOUT> <SERVER_IP>`), handling network protocol and state conversion.
+  * `SearchEngine.java`:
+    * Basic Minimax followed by **Negamax with Alpha-Beta Pruning**.
+    * **Iterative Deepening Search (IDS)**: Depth-by-depth exploration with real-time timer check to prevent timeouts.
+  * Validation: Play complete matches against [`RandomPlayer.jar`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/TablutCompetition-master/Tablut/Executables/RandomPlayer.jar) verifying 100% win-rate and 0 timeouts.
+
+### Phase 3: Opening Book & Advanced Search Techniques
+* **Educational Objective:** Understand how state transposition, move ordering heuristics, and the horizon effect impact search depth.
+* **Deliverables:**
+  * `OpeningBook.java`: Precalculated high-percentage opening lines for White and Black (keyed by Zobrist hash) returning instant moves ($<1$ ms) during turns 1–5.
+  * `TranspositionTable.java`: Hash table storing previously visited states, depth, score bounds, and best move.
+  * `MoveOrderer.java`: Sorting moves (TT best move $\rightarrow$ winning moves $\rightarrow$ captures $\rightarrow$ killer moves) to achieve optimal $\alpha$-$\beta$ cutoffs ($O(b^{d/2})$ complexity).
+  * `QuiescenceSearch.java`: Tactical capture resolution at leaf nodes to eliminate the horizon effect.
+
+### Phase 4: Parameterized Domain Heuristics
+* **Educational Objective:** Learn how to engineer evaluation features for asymmetric game dynamics (defender escape vs attacker blockade).
+* **Deliverables:**
+  * `WhiteHeuristics.java`:
+    * King distance to escape tiles.
+    * Open escape corridors and unblockable double-threat forks.
+    * King mobility and defender guard structure.
+  * `BlackHeuristics.java`:
+    * Encirclement metric around King and throne.
+    * Quadrant containment and perimeter line control.
+    * Camp exit control and white pieces captured.
+  * `Evaluation.java`: Linear combination $\text{Score} = \sum w_i f_i(S)$ with exposed weight configuration.
+
+### Phase 5: Remote Tuning Pipeline via SSH & VM Validation
+* **Educational Objective:** Learn automated machine learning tuning for heuristic weights and cross-environment deployment.
+* **Deliverables:**
+  * Headless tournament runner executing thousands of fast matches without GUI/networking overhead.
+  * Remote tuning script (SPSA or Genetic Algorithm) running on the Madrid server via SSH to discover optimal weights $w_i$.
+  * Syncing final weights into Java constants.
+  * Final validation inside the official VirtualBox Debian VM via `runmyplayer.sh` with network disconnected.
