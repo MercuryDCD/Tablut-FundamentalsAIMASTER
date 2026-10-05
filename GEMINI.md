@@ -219,6 +219,23 @@ Development follows progressive, pédagogical phases: from basic data structures
   * `MoveOrderer.java`: Sorting moves (TT best move $\rightarrow$ winning moves $\rightarrow$ captures $\rightarrow$ killer moves) to achieve optimal $\alpha$-$\beta$ cutoffs ($O(b^{d/2})$ complexity).
   * `QuiescenceSearch.java`: Tactical capture resolution at leaf nodes to eliminate the horizon effect.
 
+#### Fast-Track Strategy for Opening Book Construction:
+To avoid wasting valuable compute hours training openings from zero, the book will be constructed using three complementary sources:
+1. **Mining Historical UNIBO Repositories & Reports:** Extract battle-tested opening lines from past winning teams of the UNIBO Tablut Challenge.
+2. **Parsing Official Tournament Logs (`gameLog.txt`):** Ingest historical match logs to identify high-win-rate sequences in plies 1–6 for both White and Black.
+3. **Canonical Ashton Tablut Theory:** Hardcode proven positional foundations:
+   - *White:* Early clearance of central cross-pawns (`e4`, `e6`, `d5`, `f5`) to create orthogonal escape corridors without exposing the King prematurely.
+   - *Black:* Rapid axial blockades on the escape corridors and diagonal clamping to prevent early double-threat forks.
+4. **8-Fold Symmetry Compression ($D_4$ Dihedral Group):**
+   - Normalize every board state to its canonical rotation/reflection before looking up the Zobrist hash.
+   - Yields an $8\times$ compression factor (e.g., $50,000$ stored positions cover $400,000$ valid in-game states).
+5. **Memory-Safe Primitive Layout:**
+   - Store entries as parallel sorted primitive arrays (`long[] zobristKeys`, `short[] packedMoves`) accessed via binary search ($O(\log N)$).
+   - Memory footprint: $1,000,000$ positions require only $\approx 10$ MB of RAM ($<0.15\%$ of the 8 GB budget), preventing garbage collector pauses.
+6. **Decoupled Training Protocol:**
+   - *Self-Play Tuning (Madrid):* The engine stochastically samples among the top 2–3 book moves to expose the search heuristics to diverse mid-game states without blundering in plies 1–2.
+   - *Tournament Matches:* The engine strictly plays the greedy highest-percentage move.
+
 ### Phase 4: Parameterized Domain Heuristics
 * **Educational Objective:** Learn how to engineer evaluation features for asymmetric game dynamics (defender escape vs attacker blockade).
 * **Deliverables:**
