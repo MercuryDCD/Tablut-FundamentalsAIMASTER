@@ -192,24 +192,55 @@ The chosen approach combines a **high-performance classical search engine writte
 
 ## 7. Educational Roadmap & Development Pipeline
 
-Development follows progressive, pédagogical phases: from basic data structures to advanced competitive optimization.
+Development follows progressive, pedagogical phases: from basic data structures to advanced competitive optimization.
 
-### Phase 1: Core Domain & High-Speed State Representation
-* **Educational Objective:** Understand state-space representation, memory allocation overhead, and why standard Object-Oriented representations are too slow for game trees.
-* **Deliverables:**
-  * `Bitboard.java` or `FastState.java`: Compact representation of the 9x9 board using bit manipulation (`long`) or flat byte arrays (`byte[81]`).
-  * `MoveGenerator.java`: Legal move generation for Ashton Tablut rules (orthogonal slides, camp exceptions, throne anvil, custodian captures).
-  * `ZobristHash.java`: $O(1)$ state hashing with XOR operations for transposition lookup and cycle detection.
-  * `PerftTest.java`: Performance test counting total leaf nodes at depths $1, 2, 3, 4$ to verify correctness against [`GameAshtonTablut.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/TablutCompetition-master/Tablut/src/it/unibo/ai/didattica/competition/tablut/domain/GameAshtonTablut.java).
+### Progress Summary
+- [x] **Phase 1: Core Domain & High-Speed State Representation** (Completed, Commit `c31a286`, 85M NPS, 100% Rule Compliance).
+- [ ] **Phase 2: Search Engine & Socket Client Integration** (Next Up: Negamax $\alpha$-$\beta$, IDS, Socket Client).
+- [ ] **Phase 3: Opening Book & Advanced Search Techniques** (Transposition Table, Move Ordering, Quiescence).
+- [ ] **Phase 4: Parameterized Domain Heuristics** (King Escape, Quadrant Encirclement, Mobility).
+- [ ] **Phase 5: Remote Tuning Pipeline & Competition VM Validation** (SPSA, Self-play tournaments, VirtualBox test).
 
-### Phase 2: Search Engine & Socket Client Integration
-* **Educational Objective:** Understand Minimax, the mathematical principle of Alpha-Beta pruning, and practical time management.
-* **Deliverables:**
-  * `AgentClient.java`: Concrete implementation extending [`TablutClient.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/TablutCompetition-master/Tablut/src/it/unibo/ai/didattica/competition/tablut/client/TablutClient.java), parsing CLI parameters (`<ROLE> <TIMEOUT> <SERVER_IP>`), handling network protocol and state conversion.
-  * `SearchEngine.java`:
-    * Basic Minimax followed by **Negamax with Alpha-Beta Pruning**.
-    * **Iterative Deepening Search (IDS)**: Depth-by-depth exploration with real-time timer check to prevent timeouts.
-  * Validation: Play complete matches against [`RandomPlayer.jar`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/TablutCompetition-master/Tablut/Executables/RandomPlayer.jar) verifying 100% win-rate and 0 timeouts.
+---
+
+### Phase 1: Core Domain & High-Speed State Representation [COMPLETED]
+* **Educational Objective:** Master state-space representation, cache memory alignment, zero-allocation make/unmake patterns, and O(1) state hashing.
+* **Delivered Components (`src/tablut/engine/`):**
+  * `BoardConstants.java`: Precomputed static lookup tables for the 9x9 Ashton board (camps, capture anvils, escape squares, throne, and string name mapping).
+  * `Move.java`: Compact move representation packed into a 32-bit primitive integer (bits 0..6 `from`, bits 7..13 `to`).
+  * `UndoInfo.java`: Stack-allocated struct recording captured pawns and prior state for O(1) unmake move without heap allocation.
+  * `FastState.java`: High-performance 81-byte board array (`byte[81]`) with active custodian captures and Ashton king encirclement rules.
+  * `MoveGenerator.java`: Legal rook-slide move generation enforcing Ashton camp entry/exit and throne barrier rules.
+  * `ZobristHash.java`: Incremental 64-bit XOR state hashing for repetition detection and transposition tables.
+  * `StateAdapter.java`: Bi-directional bridge between `FastState` and official UNIBO `StateTablut` / `Action`.
+  * `PerftTest.java`: Stress-test verifying node counts and throughput:
+    * Depth 1: 56 nodes (0.002 s)
+    * Depth 2: 4,408 nodes (0.001 s)
+    * Depth 3: 248,456 nodes (0.014 s)
+    * Depth 4: 19,159,224 nodes in 0.225 s (**85,048,952 NPS**).
+  * `RuleVerificationTest.java`: Automated cross-validation testing all root moves and 791 black branches against `GameAshtonTablut.checkMove`, confirming 100% compliance.
+
+---
+
+### Phase 2: Search Engine & Socket Client Integration [READY FOR NEXT CONVERSATION]
+* **Educational Objective:** Understand game tree search (Minimax, Negamax with Alpha-Beta pruning), Iterative Deepening Search (IDS), dynamic time management, and TCP socket client communication.
+* **Architecture & Step-by-Step Deliverables:**
+  1. `BaselineEvaluation.java`:
+     - Fast material balance (White pawns vs Black pawns, King win/loss evaluation).
+     - Provides leaf node scoring required by Alpha-Beta prior to Phase 4 advanced heuristics.
+  2. `SearchEngine.java`:
+     - **Negamax with $\alpha$-$\beta$ Pruning:** Efficient minimax formulation exploiting zero-sum duality: $\text{score} = -\text{negamax}(-\beta, -\alpha)$.
+     - **Iterative Deepening Search (IDS):** Searches depth 1, 2, 3, ... iteratively. If time runs out, returns the best move of the last fully completed depth.
+     - **Strict Time Management:** Dynamically monitors `System.currentTimeMillis()`. Cuts off search safely at $85\% - 90\%$ of `<TIMEOUT_SECONDS>` to prevent tournament forfeit.
+  3. `TablutAgentClient.java`:
+     - CLI entry point parsing `<ROLE> <TIMEOUT_SECONDS> <SERVER_IP>`.
+     - Connects via TCP to port 5800 (White) or 5801 (Black) using 4-byte big-endian framing.
+     - Performs initial handshake with player name.
+     - Implements game loop: converts incoming state via `StateAdapter`, computes best move via `SearchEngine`, and sends move JSON.
+     - **Tournament Rule Compliance:** Completely blocks on TCP read during opponent turns (zero background pondering/threads).
+  4. **Validation Milestone:**
+     - Launch official referee `Server.jar` and play full end-to-end games against `RandomPlayer.jar`.
+     - Verify 100% win-rate with 0 errors and 0 timeouts.
 
 ### Phase 3: Opening Book & Advanced Search Techniques
 * **Educational Objective:** Understand how state transposition, move ordering heuristics, and the horizon effect impact search depth.
