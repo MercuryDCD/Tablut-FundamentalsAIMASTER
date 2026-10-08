@@ -230,8 +230,11 @@ Development follows progressive, pedagogical phases: from basic data structures 
      - Provides leaf node scoring required by Alpha-Beta prior to Phase 4 advanced heuristics.
   2. `SearchEngine.java`:
      - **Negamax with $\alpha$-$\beta$ Pruning:** Efficient minimax formulation exploiting zero-sum duality: $\text{score} = -\text{negamax}(-\beta, -\alpha)$.
-     - **Iterative Deepening Search (IDS):** Searches depth 1, 2, 3, ... iteratively. If time runs out, returns the best move of the last fully completed depth.
-     - **Strict Time Management:** Dynamically monitors `System.currentTimeMillis()`. Cuts off search safely at $85\% - 90\%$ of `<TIMEOUT_SECONDS>` to prevent tournament forfeit.
+     - **Iterative Deepening Search (IDS):** Searches depth 1, 2, 3, ... iteratively. If interrupted mid-depth, discards the incomplete layer and returns the verified best move of the last fully completed depth $d$.
+     - **Two-Tier Dynamic Time Management:**
+       - *Predictive Soft Cutoff:* Estimates $T_{d+1} \approx T_d \times b_{\text{eff}}$. Prevents starting depth $d+1$ if projected time exceeds the safety margin.
+       - *Emergency Hard Cutoff:* Periodically checks `System.currentTimeMillis()` every $4096$ nodes using bitmask `(nodeCount & 4095) == 0` inside recursive search. Sets `stopped = true`, immediately unwinds the recursion stack, and transmits the move with ample buffer.
+       - *Configurable Safety Ratio:* Parameterized threshold (`timeSafetyRatio = 0.90`) to allow empirical calibration (testing 0.90, 0.93, 0.95) under tournament VM conditions without risk of forfeit.
   3. `TablutAgentClient.java`:
      - CLI entry point parsing `<ROLE> <TIMEOUT_SECONDS> <SERVER_IP>`.
      - Connects via TCP to port 5800 (White) or 5801 (Black) using 4-byte big-endian framing.
