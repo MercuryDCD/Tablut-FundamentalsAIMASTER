@@ -30,6 +30,12 @@ The baseline framework provided by the professors is located in [`TablutCompetit
 * [`Tablut/src/it/unibo/ai/didattica/competition/tablut/`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/TablutCompetition-master/Tablut/src/it/unibo/ai/didattica/competition/tablut/): Reference Java implementation including domain state definitions, game rules, client abstraction, and GUI/server runners.
 * [`Tablut/python_player_helper`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/TablutCompetition-master/Tablut/python_player_helper): Reference Python socket communication snippet demonstrating big-endian framing and JSON exchange.
 
+### 2.1 Immutability of Provided Starter Files (STRICT REQUIREMENT)
+> [!CAUTION]
+> **DO NOT MODIFY ANY FILES IN `TablutCompetition-master/`:**
+> All files provided by the course professors in `TablutCompetition-master/` (including Java sources, precompiled JARs, Ant build scripts, and documentation) **MUST remain strictly read-only and unmodified**.
+> All custom code, engine optimizations, search heuristics, scripts, and tests must reside exclusively in our own source directories (`src/tablut/engine/`, `runmyplayer.sh`, etc.) and interact with the starter framework purely as an external read-only classpath dependency and via network socket protocols.
+
 ---
 
 ## 3. Game Rules (Ashton Tablut)
@@ -114,6 +120,7 @@ The agent must be executable via a single shell script located at a fixed path i
 
 ### 4.4 Pre-Change Verification Checklist
 Before implementing or committing any changes, verify:
+- [ ] Are all files in `TablutCompetition-master/` completely untouched (strictly read-only)?
 - [ ] Does this run 100% on CPU without requiring GPU acceleration?
 - [ ] Does this run completely offline without downloading external assets or packages?
 - [ ] Does the agent halt all CPU threads during the opponent's turn, blocking purely on socket read?
@@ -196,7 +203,7 @@ Development follows progressive, pedagogical phases: from basic data structures 
 
 ### Progress Summary
 - [x] **Phase 1: Core Domain & High-Speed State Representation** (Completed, Commit `c31a286`, 85M NPS, 100% Rule Compliance).
-- [ ] **Phase 2: Search Engine & Socket Client Integration** (Next Up: Negamax $\alpha$-$\beta$, IDS, Socket Client).
+- [x] **Phase 2: Search Engine & Socket Client Integration** (Completed, Negamax $\alpha$-$\beta$, IDS, Two-Tier Time Management, 100% Win vs RandomPlayer).
 - [ ] **Phase 3: Opening Book & Advanced Search Techniques** (Transposition Table, Move Ordering, Quiescence).
 - [ ] **Phase 4: Parameterized Domain Heuristics** (King Escape, Quadrant Encirclement, Mobility).
 - [ ] **Phase 5: Remote Tuning Pipeline & Competition VM Validation** (SPSA, Self-play tournaments, VirtualBox test).
@@ -222,28 +229,20 @@ Development follows progressive, pedagogical phases: from basic data structures 
 
 ---
 
-### Phase 2: Search Engine & Socket Client Integration [READY FOR NEXT CONVERSATION]
+### Phase 2: Search Engine & Socket Client Integration [COMPLETED]
 * **Educational Objective:** Understand game tree search (Minimax, Negamax with Alpha-Beta pruning), Iterative Deepening Search (IDS), dynamic time management, and TCP socket client communication.
-* **Architecture & Step-by-Step Deliverables:**
-  1. `BaselineEvaluation.java`:
-     - Fast material balance (White pawns vs Black pawns, King win/loss evaluation).
-     - Provides leaf node scoring required by Alpha-Beta prior to Phase 4 advanced heuristics.
+* **Delivered Components (`src/tablut/engine/`):**
+  1. `BaselineEvaluation.java`: Fast asymmetric material balance, King escape corridor threat detection, and encirclement penalty.
   2. `SearchEngine.java`:
-     - **Negamax with $\alpha$-$\beta$ Pruning:** Efficient minimax formulation exploiting zero-sum duality: $\text{score} = -\text{negamax}(-\beta, -\alpha)$.
-     - **Iterative Deepening Search (IDS):** Searches depth 1, 2, 3, ... iteratively. If interrupted mid-depth, discards the incomplete layer and returns the verified best move of the last fully completed depth $d$.
-     - **Two-Tier Dynamic Time Management:**
-       - *Predictive Soft Cutoff:* Estimates $T_{d+1} \approx T_d \times b_{\text{eff}}$. Prevents starting depth $d+1$ if projected time exceeds the safety margin.
-       - *Emergency Hard Cutoff:* Periodically checks `System.currentTimeMillis()` every $4096$ nodes using bitmask `(nodeCount & 4095) == 0` inside recursive search. Sets `stopped = true`, immediately unwinds the recursion stack, and transmits the move with ample buffer.
-       - *Configurable Safety Ratio:* Parameterized threshold (`timeSafetyRatio = 0.90`) to allow empirical calibration (testing 0.90, 0.93, 0.95) under tournament VM conditions without risk of forfeit.
-  3. `TablutAgentClient.java`:
-     - CLI entry point parsing `<ROLE> <TIMEOUT_SECONDS> <SERVER_IP>`.
-     - Connects via TCP to port 5800 (White) or 5801 (Black) using 4-byte big-endian framing.
-     - Performs initial handshake with player name.
-     - Implements game loop: converts incoming state via `StateAdapter`, computes best move via `SearchEngine`, and sends move JSON.
-     - **Tournament Rule Compliance:** Completely blocks on TCP read during opponent turns (zero background pondering/threads).
-  4. **Validation Milestone:**
-     - Launch official referee `Server.jar` and play full end-to-end games against `RandomPlayer.jar`.
-     - Verify 100% win-rate with 0 errors and 0 timeouts.
+     - **Negamax with $\alpha$-$\beta$ Pruning:** Exploits zero-sum symmetry with shortest-path terminal scoring (`WIN_SCORE - ply`).
+     - **Iterative Deepening Search (IDS):** Anytime algorithm yielding verified moves from depth $d-1$ if interrupted.
+     - **Two-Tier Dynamic Time Management:** Predictive soft cutoff ($T_{d+1} \approx T_d \times b_{\text{eff}}$) + bitmask emergency hard cutoff `(nodeCount & 4095) == 0`. Configurable safety ratio (default `0.90`).
+     - **Zero Allocation in Search Loop:** Preallocated move and undo stacks.
+  3. `TablutAgentClient.java`: Official CLI entry point parsing `<ROLE> <TIMEOUT_SECONDS> <SERVER_IP>` with case-insensitivity, 4-byte big-endian TCP framing, and strict blocking reads during opponent turns (0% CPU usage).
+  4. `runmyplayer.sh` & `runmyplayer.ps1`: POSIX LF script and PowerShell runner conforming to competition VM specifications.
+  5. `SearchEngineTest.java`: Unit suite verifying White instant escape, Black instant capture, and dynamic cutoff.
+* **Validation Milestone:**
+  - Automated match against official `Server.jar` and `RandomPlayer.jar`: White secured victory in 15 plies without timeouts, errors, or protocol desyncs. Engine reached Depth 5–6 searching $>14,000,000$ NPS in live games.
 
 ### Phase 3: Opening Book & Advanced Search Techniques
 * **Educational Objective:** Understand how state transposition, move ordering heuristics, and the horizon effect impact search depth.

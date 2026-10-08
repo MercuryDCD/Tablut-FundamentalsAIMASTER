@@ -21,6 +21,7 @@ target/
 
 # Logs and runtime artifacts
 logs/
+garbage/
 *.log
 *.tmp
 
