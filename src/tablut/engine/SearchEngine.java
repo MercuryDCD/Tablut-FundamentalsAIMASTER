@@ -33,6 +33,10 @@ public final class SearchEngine {
     private boolean useTranspositionTable = true;
     private boolean useMoveOrdering = true;
     private boolean useQuiescence = true;
+    private boolean useHeuristicEvaluation = true;
+
+    // Parameterized weights for Phase 4 & Phase 5 SPSA tuning
+    private HeuristicWeights weights = new HeuristicWeights();
 
     // Preallocated search structures (zero allocations in recursive loops)
     private final int[][] moveStack = new int[MAX_DEPTH][MoveGenerator.MAX_MOVES];
@@ -107,6 +111,26 @@ public final class SearchEngine {
         this.useQuiescence = use;
     }
 
+    public void setHeuristicWeights(HeuristicWeights weights) {
+        if (weights != null) {
+            this.weights = weights;
+            this.quiescenceSearch.setHeuristicWeights(weights);
+        }
+    }
+
+    public HeuristicWeights getHeuristicWeights() {
+        return weights;
+    }
+
+    public void setUseHeuristicEvaluation(boolean use) {
+        this.useHeuristicEvaluation = use;
+        this.quiescenceSearch.setUseHeuristicEvaluation(use);
+    }
+
+    public boolean isUseHeuristicEvaluation() {
+        return useHeuristicEvaluation;
+    }
+
     public TranspositionTable getTranspositionTable() {
         return tt;
     }
@@ -117,6 +141,18 @@ public final class SearchEngine {
 
     public OpeningBook getOpeningBook() {
         return openingBook;
+    }
+
+    public QuiescenceSearch getQuiescenceSearch() {
+        return quiescenceSearch;
+    }
+
+    private int evaluateLeaf(FastState state) {
+        if (useHeuristicEvaluation) {
+            return HeuristicEvaluation.evaluate(state, weights);
+        } else {
+            return BaselineEvaluation.evaluate(state);
+        }
     }
 
     /**
@@ -285,12 +321,12 @@ public final class SearchEngine {
             if (useQuiescence) {
                 return quiescenceSearch.search(state, alpha, beta, 0, ply);
             } else {
-                return BaselineEvaluation.evaluate(state);
+                return evaluateLeaf(state);
             }
         }
 
         if (ply >= MAX_DEPTH - 1) {
-            return BaselineEvaluation.evaluate(state);
+            return evaluateLeaf(state);
         }
 
         // 3. Move Generation

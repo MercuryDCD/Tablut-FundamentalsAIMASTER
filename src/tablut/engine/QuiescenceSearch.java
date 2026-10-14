@@ -37,9 +37,38 @@ public final class QuiescenceSearch {
     private final int[][] qsMoveStack = new int[MAX_QS_DEPTH + 1][MoveGenerator.MAX_MOVES];
     private final UndoInfo[] qsUndoStack = new UndoInfo[MAX_QS_DEPTH + 1];
 
+    private HeuristicWeights weights = new HeuristicWeights();
+    private boolean useHeuristicEvaluation = true;
+
     public QuiescenceSearch() {
         for (int i = 0; i <= MAX_QS_DEPTH; i++) {
             qsUndoStack[i] = new UndoInfo();
+        }
+    }
+
+    public void setHeuristicWeights(HeuristicWeights weights) {
+        if (weights != null) {
+            this.weights = weights;
+        }
+    }
+
+    public HeuristicWeights getHeuristicWeights() {
+        return weights;
+    }
+
+    public void setUseHeuristicEvaluation(boolean use) {
+        this.useHeuristicEvaluation = use;
+    }
+
+    public boolean isUseHeuristicEvaluation() {
+        return useHeuristicEvaluation;
+    }
+
+    private int evaluateLeaf(FastState state) {
+        if (useHeuristicEvaluation) {
+            return HeuristicEvaluation.evaluate(state, weights);
+        } else {
+            return BaselineEvaluation.evaluate(state);
         }
     }
 
@@ -68,7 +97,7 @@ public final class QuiescenceSearch {
         }
 
         // 1. Stand-Pat Evaluation: evaluate static position
-        int standPat = BaselineEvaluation.evaluate(state);
+        int standPat = evaluateLeaf(state);
 
         // Beta cutoff: position is so advantageous that opponent will avoid it
         if (standPat >= beta) {

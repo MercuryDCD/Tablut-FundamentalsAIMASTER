@@ -64,7 +64,7 @@ public final class QuiescenceSearchTest {
         state.blackCount = 1;
         state.turn = BoardConstants.WHITE_TURN;
 
-        int staticScoreBefore = BaselineEvaluation.evaluate(state);
+        int staticScoreBefore = qs.isUseHeuristicEvaluation() ? HeuristicEvaluation.evaluate(state) : BaselineEvaluation.evaluate(state);
         int qsScore = qs.search(state, -10000, 10000, 0, 1);
 
         if (qsScore <= staticScoreBefore) {
@@ -92,7 +92,7 @@ public final class QuiescenceSearchTest {
         state.board[BoardConstants.coord(2, 2)] = BoardConstants.WHITE; // c3
         state.turn = BoardConstants.WHITE_TURN;
 
-        int staticBefore = BaselineEvaluation.evaluate(state);
+        int staticBefore = qs.isUseHeuristicEvaluation() ? HeuristicEvaluation.evaluate(state) : BaselineEvaluation.evaluate(state);
         int qsScore = qs.search(state, -10000, 10000, 0, 1);
 
         // The naive 1-ply capture would score -150, but QS discovers the counter-capture

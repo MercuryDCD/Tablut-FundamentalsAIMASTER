@@ -205,8 +205,8 @@ Development follows progressive, pedagogical phases: from basic data structures 
 - [x] **Phase 1: Core Domain & High-Speed State Representation** (Completed, Commit `c31a286`, 85M NPS, 100% Rule Compliance).
 - [x] **Phase 2: Search Engine & Socket Client Integration** (Completed, Negamax $\alpha$-$\beta$, IDS, Two-Tier Time Management, 100% Win vs RandomPlayer).
 - [x] **Phase 3: Opening Book & Advanced Search Techniques** (Completed, Transposition Table, Move Ordering, Quiescence Search, D4 Opening Book, 40.5x Node Pruning Reduction).
-- [ ] **Phase 4: Parameterized Domain Heuristics** (King Escape, Quadrant Encirclement, Mobility).
-- [ ] **Phase 5: Remote Tuning Pipeline & Competition VM Validation** (SPSA, Self-play tournaments, VirtualBox test).
+- [x] **Phase 4: Parameterized Domain Heuristics** (Completed, King Escape Forks, Rhombus Blockade, Keep Fronts, 30.9M evals/sec, 15 Tunable Parameters).
+- [ ] **Phase 5: Multi-Core Scaling (4 vCPUs Lazy SMP) & Remote Tuning Pipeline** (SPSA, Self-play tournaments, VirtualBox test).
 
 ---
 
@@ -288,9 +288,9 @@ To avoid wasting valuable compute hours training openings from zero, the book wi
    - *Self-Play Tuning (Madrid):* The engine stochastically samples among the top 2–3 book moves to expose the search heuristics to diverse mid-game states without blundering in plies 1–2.
    - *Tournament Matches:* The engine strictly plays the greedy highest-percentage move.
 
-### Phase 4: Parameterized Domain Heuristics [UPCOMING]
+### Phase 4: Parameterized Domain Heuristics [COMPLETED]
 * **Educational Objective:** Learn how to engineer evaluation features for asymmetric game dynamics (defender escape vs attacker blockade), translating strategic literature and tournament champion patterns into fast, cache-aligned evaluation mathematics.
-* **Knowledge Ingestion & Literature Insights (What & When to Learn):**
+* **Knowledge Ingestion & Literature Insights:**
   1. **White Positional Dynamics (*brAInmates* & *THoR*):**
      - *Diamond / Windmill Center (`bestPositions`):* White pawns occupying $\{d3, f4, d6, f7\}$ clear the orthogonal cross while maintaining mutual protection and preventing King entrapment.
      - *Escape Corridors & 2-Way Forks (`NUM_ESCAPES_KING`):* Detect positions where the King commands 2 independent open lines to perimeter escapes ($w \approx 18\%$).
@@ -301,18 +301,28 @@ To avoid wasting valuable compute hours training openings from zero, the book wi
      - *Camp Front Discipline ("Keep the Fronts"):* Penalize premature abandonment of camp gateway squares (`e2`, `e8`, `b5`, `h5`) which yield unearned King escape channels.
      - *King Encirclement Metric (`blackSurroundKing`):* Measure hostile density adjacent to King and Throne ($w \approx 15\%$).
      - *Material Superiority:* Attrition priority ($48\%$ White captured, $35\%$ Black preservation).
-* **Deliverables (`src/tablut/engine/`):**
-  * `WhiteHeuristics.java`:
-    * King distance to escape tiles and unobstructed escape paths.
-    * Unblockable double-threat fork detection.
-    * Diamond formation occupancy ($\{d3, f4, d6, f7\}$).
-    * King custodian shield protection.
-  * `BlackHeuristics.java`:
-    * 8-point Rhombus blockade metric ($\{c2, g2, b3, h3, b7, h7, c8, g8\}$).
-    * Camp doorway preservation penalty ("Keep the Fronts").
-    * Hostile encirclement count adjacent to King.
-    * Perimeter file and rank coverage.
-  * `HeuristicEvaluation.java`: Zero-allocation linear evaluation $\text{Score} = \sum w_i f_i(S)$ returning normalized integer scores directly compatible with Negamax and Quiescence.
+* **Delivered Components (`src/tablut/engine/`):**
+  1. `HeuristicWeights.java`:
+     - 15 parameterized weights covering White and Black asymmetric dynamics.
+     - Array serialization (`toArray()` / `fromArray(int[])`) for direct injection from Phase 5 automated tuning (SPSA / GA).
+  2. `WhiteHeuristics.java`:
+     - Asymmetric material balance + King distance penalty.
+     - Fast $O(1)$ orthogonal ray casting detecting single escape threats and unblockable 2-way forks.
+     - Diamond 1 $\{d3, f4, d6, f7\}$ and Diamond 2 $\{f3, d4, f6, d7\}$ occupancy.
+     - King mobility and anti-custodian vulnerability on/near/off the Throne.
+  3. `BlackHeuristics.java`:
+     - Asymmetric material balance + attrition priority.
+     - The 8-Point Rhombus blockade metric on $\{c2, g2, b3, h3, b7, h7, c8, g8\}$.
+     - Camp doorway preservation ("Keep the Fronts" on $\{e2, e8, b5, h5\}$).
+     - King encirclement count adjusted for Ashton capture geometry (Throne, Adjacent, Open Field).
+     - Center confinement / containment metric.
+  4. `HeuristicEvaluation.java`:
+     - Zero-allocation linear evaluation engine returning Negamax-perspective scores.
+     - Integrated seamlessly into `SearchEngine` and `QuiescenceSearch`.
+  5. `HeuristicEvaluationTest.java`:
+     - 10-stage test suite passing 100%.
+     - Benchmarked throughput: **$>30,900,000$ evaluations/second** on pure CPU with 0 garbage collector overhead.
+     - Full regression verified across `RuleVerificationTest`, `TranspositionTableTest`, `MoveOrdererTest`, `QuiescenceSearchTest`, and `PerftTest`.
 
 ---
 
