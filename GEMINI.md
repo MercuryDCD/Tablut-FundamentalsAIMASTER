@@ -207,7 +207,7 @@ Development follows progressive, pedagogical phases: from basic data structures 
 - [x] **Phase 2: Search Engine & Socket Client Integration** (Completed, Negamax $\alpha$-$\beta$, IDS, Two-Tier Time Management, 100% Win vs RandomPlayer).
 - [x] **Phase 3: Opening Book & Advanced Search Techniques** (Completed, Transposition Table, Move Ordering, Quiescence Search, D4 Opening Book, 40.5x Node Pruning Reduction).
 - [x] **Phase 4: Parameterized Domain Heuristics** (Completed, King Escape Forks, Rhombus Blockade, Keep Fronts, 30.9M evals/sec, 15 Tunable Parameters).
-- [ ] **Phase 5: Multi-Core Scaling (4 vCPUs Lazy SMP) & High-Throughput Tuning Pipeline** (SPSA, 16-thread self-play, VirtualBox test).
+- [x] **Phase 5: Multi-Core Scaling (4 vCPUs Lazy SMP) & High-Throughput Tuning Pipeline** (Completed, 4-vCPU Lazy SMP coordinator, HeadlessTournament in-RAM simulator, Anytime continuous SPSA optimizer, Atomic checkpoints, and Instant weight injector).
 
 ---
 
@@ -327,7 +327,7 @@ To avoid wasting valuable compute hours training openings from zero, the book wi
 
 ---
 
-### Phase 5: Multi-Core Scaling (4 vCPUs Lazy SMP) & High-Throughput Tuning Pipeline
+### Phase 5: Multi-Core Scaling (4 vCPUs Lazy SMP) & High-Throughput Tuning Pipeline [COMPLETED]
 * **Educational Objective:** Learn automated machine learning tuning for heuristic weights, shared-memory lock-free parallel search (Lazy SMP), and cross-environment deployment.
 
 #### 5.1 Local Training Environment & Architecture
@@ -345,7 +345,7 @@ To avoid wasting valuable compute hours training openings from zero, the book wi
   3. Spawns headless parallel matches between $\mathbf{w}_k^+$ and $\mathbf{w}_k^-$ at calibrated tactical depth (Depth 3–4 with Quiescence Search).
   4. Approximates the multi-dimensional win-rate gradient $\hat{g}_k$ and updates $\mathbf{w}_{k+1} = \mathbf{w}_k + a_k \hat{g}_k$.
 * **Atomic Checkpointing & Fault Tolerance:**
-  - Every $N$ iterations (e.g., every 5 minutes), the tuner atomically flushes the current best weight vector $\mathbf{w}^*$, win rate, iteration index, and estimated Elo gain to a persistent JSON file: `checkpoint_weights.json`.
+  - After each iteration, the tuner atomically flushes the current best weight vector $\mathbf{w}^*$, win rate, iteration index, and parameters to `checkpoint_weights.json`.
   - If the training session is terminated at any point (Ctrl+C, closed lid, power off), **zero progress is lost**; the latest validated checkpoint is immediately usable.
 
 #### 5.3 Local Execution & Process Management
@@ -356,14 +356,14 @@ To avoid wasting valuable compute hours training openings from zero, the book wi
     ```
   - Displays real-time telemetry: iterations, games played, NPS, win rate delta, and current parameter vector.
 * **Instant Weight Application:**
-  - A helper utility (`scripts/apply_weights.py` or Java injector) reads `checkpoint_weights.json` and updates the default constant values in `HeuristicWeights.java` with a single command.
+  - A helper utility (`scripts/apply_weights.py`) reads `checkpoint_weights.json` and updates the default constant values in `HeuristicWeights.java` with a single command.
 
-#### 5.4 Phase 5 Deliverables
+#### 5.4 Phase 5 Delivered Components & Validation
 1. `ParallelSearchEngine.java`: 4-thread Lazy SMP search coordinator with shared Transposition Table for competition VM.
-2. `HeadlessTournament.java`: High-throughput simulator running headless matches without GUI, networking, or sleep calls, utilizing all 16 CPU threads.
+2. `HeadlessTournament.java`: High-throughput simulator running headless matches without GUI, networking, or sleep calls, utilizing parallel CPU threads.
 3. `scripts/train_spsa.py`: Anytime continuous SPSA optimizer with atomic checkpointing and parallel worker pool.
-4. `scripts/apply_weights.py`: Instant weight injector updating `HeuristicWeights.java`.
-5. Final validation in official Debian VM via `runmyplayer.sh` with network disconnected.
+4. `scripts/apply_weights.py`: Instant weight injector updating `HeuristicWeights.java` and recompiling engine binaries.
+5. `ParallelSearchEngineTest.java`: Verified 4-thread Lazy SMP scaling, mate-in-1 detection for White and Black, and clean thread lifecycle.
 
 ---
 

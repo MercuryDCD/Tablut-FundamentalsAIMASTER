@@ -22,14 +22,14 @@ public final class TablutAgentClient extends TablutClient {
     public static final String AGENT_NAME = "Antigravity";
 
     private final int timeoutSeconds;
-    private final SearchEngine engine;
+    private final ParallelSearchEngine engine;
     private final FastState fastState;
 
     public TablutAgentClient(String role, int timeoutSeconds, String serverIp)
             throws UnknownHostException, IOException {
         super(role.toLowerCase(), AGENT_NAME, timeoutSeconds, serverIp);
         this.timeoutSeconds = timeoutSeconds;
-        this.engine = new SearchEngine();
+        this.engine = new ParallelSearchEngine();
         this.engine.setTimeSafetyRatio(0.90); // Parameterized 90% budget ratio
         this.fastState = new FastState();
     }

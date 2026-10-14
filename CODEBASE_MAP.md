@@ -172,6 +172,21 @@
 
 ---
 
+### `ParallelSearchEngine.java`
+* **Path:** [`src/tablut/engine/ParallelSearchEngine.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/ParallelSearchEngine.java)
+* **Purpose:** Multi-threaded Lazy SMP (Shared Memory Parallelism) search coordinator utilizing 4 vCPUs for tournament play.
+* **Lazy SMP Architecture:**
+  * Master thread (Thread 0) coordinates iterative deepening and dynamic time management.
+  * Helper threads (Threads 1..N-1) execute parallel iterative deepening over the shared `TranspositionTable`.
+  * **Search Diversification:**
+    * Root move permutation: Helper $t$ shifts root move evaluation order by `(i + t) % numMoves`.
+    * Depth staggering: Helper threads start at varied depth offsets (`1 + t % 2`), seeding deeper entries in the shared TT.
+  * **Tournament Invariant Compliance:**
+    * Halts and joins all worker threads upon move selection.
+    * 0.0% CPU during opponent's turn (worker pool threads parked in `WAITING` state).
+
+---
+
 ### `TranspositionTable.java`
 * **Path:** [`src/tablut/engine/TranspositionTable.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/TranspositionTable.java)
 * **Purpose:** Zero-allocation hash table indexing $2^{21}$ ($2,097,152$) states in primitive parallel arrays (~38 MB RAM).
@@ -309,7 +324,19 @@
 * **Key Tournament Invariants:**
   * Role parsing is strictly case-insensitive (`white`, `WHITE`, `White`).
   * Big-endian 4-byte integer length-prefixed framing over TCP port $5800$ (White) or $5801$ (Black).
+  * Equipped with `ParallelSearchEngine` utilizing all 4 vCPUs via Lazy SMP.
   * **0% CPU on Opponent Turn:** Calls `this.read()` which synchronously blocks the thread on the TCP socket read. No background worker threads or pondering.
+
+---
+
+### `HeadlessTournament.java`
+* **Path:** [`src/tablut/engine/HeadlessTournament.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/HeadlessTournament.java)
+* **Purpose:** High-throughput match simulator executing balanced matches directly in RAM with zero GUI or networking.
+* **Key Features:**
+  * Parallel match execution across configurable worker threads.
+  * Strict color-balanced alternation (Game $2k$: A=White, B=Black; Game $2k+1$: B=White, A=Black).
+  * Opening tree diversification: Uniform random move selection in opening plies ($K=2$).
+  * JSON telemetry output for seamless integration with Python optimization pipelines.
 
 ---
 
@@ -320,6 +347,7 @@
 | **`PerftTest.java`** | Stress tests move generator & make/unmake. Verifies exact node counts to Depth 4 ($19,159,224$ nodes in $0.22$s, **85M NPS**). |
 | **`RuleVerificationTest.java`** | Cross-checks all generated root moves and 791 Black branches against official `GameAshtonTablut.checkMove`. Confirms 100% Ashton rule compliance. |
 | **`SearchEngineTest.java`** | Verifies 1-ply White escape, 1-ply Black capture, soft/hard deadline compliance, and confirms a **40.5x node pruning factor**. |
+| **`ParallelSearchEngineTest.java`** | Validates Lazy SMP scaling, mate-in-1 detection across 4 threads, and clean thread pool lifecycle. |
 | **`TranspositionTableTest.java`** | Verifies exact/bound cutoffs, Zobrist collision rejection, ply-distance mate score normalization, and throughput (>20M ops/sec). |
 | **`MoveOrdererTest.java`** | Validates the 5 priority tiers: TT move ($1,000,000$) > Winning moves ($900,000$) > Captures ($500,000+$) > Killers > History. |
 | **`QuiescenceSearchTest.java`** | Verifies stand-pat beta cutoff, capture resolution, horizon trap evasion, and king escape detection. |
@@ -330,6 +358,13 @@
 
 ## 7. Execution Scripts & Environment Files
 
+* **`scripts/train_spsa.py`**:
+  * Anytime Continuous SPSA Optimizer perturbing all 15 heuristic parameters simultaneously.
+  * Manages zero-loss atomic checkpoints (`checkpoint_weights.json`) and runs color-balanced headless simulations.
+* **`scripts/apply_weights.py`**:
+  * Ingests optimized weights from `checkpoint_weights.json`, patches `HeuristicWeights.java`, and recompiles binaries.
+* **`checkpoint_weights.json`**:
+  * Atomic state file storing active and best heuristic parameter vectors, win rates, and iteration metadata.
 * **`runmyplayer.sh`** / **`runmyplayer.ps1`**:
   * Official execution wrappers conforming to `/home/tablut/tablut/runmyplayer.sh <ROLE> <TIMEOUT_SECONDS> <SERVER_IP>`.
   * Strict POSIX `LF` line endings for Linux Debian VM execution.

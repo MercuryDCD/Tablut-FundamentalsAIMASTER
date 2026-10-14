@@ -163,11 +163,25 @@ public final class SearchEngine {
      * @return SearchResult containing the best move and search diagnostics.
      */
     public SearchResult search(FastState rootState, int timeBudgetMs) {
+        return search(rootState, timeBudgetMs, MAX_DEPTH);
+    }
+
+    /**
+     * Conducts an Iterative Deepening Search up to a maximum depth within the allocated time budget.
+     *
+     * @param rootState   The game state to analyze.
+     * @param timeBudgetMs The total decision timeout in milliseconds.
+     * @param maxDepth    Maximum depth to search (capped at MAX_DEPTH).
+     * @return SearchResult containing the best move and search diagnostics.
+     */
+    public SearchResult search(FastState rootState, int timeBudgetMs, int maxDepth) {
         this.startTimeMs = System.currentTimeMillis();
         long allocatedTimeMs = (long) (timeBudgetMs * timeSafetyRatio);
         this.hardDeadlineMs = startTimeMs + allocatedTimeMs;
         this.stopped = false;
         this.nodesVisited = 0;
+
+        int searchLimitDepth = Math.min(maxDepth, MAX_DEPTH - 1);
 
         // 1. Probe Opening Book for instant theoretical move (<1 ms)
         if (useOpeningBook) {
@@ -200,7 +214,7 @@ public final class SearchEngine {
         long lastDepthDuration = 0;
 
         // 3. Iterative Deepening Search (IDS) loop
-        for (int depth = 1; depth < MAX_DEPTH; depth++) {
+        for (int depth = 1; depth <= searchLimitDepth; depth++) {
             long depthStartTime = System.currentTimeMillis();
             long elapsedSoFar = depthStartTime - startTimeMs;
 

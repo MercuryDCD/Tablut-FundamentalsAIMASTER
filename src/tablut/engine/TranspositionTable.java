@@ -1,6 +1,7 @@
 package tablut.engine;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.LongAdder;
 
 /**
  * High-performance, zero-allocation Transposition Table (TT) for Ashton Tablut.
@@ -57,10 +58,10 @@ public final class TranspositionTable {
 
     private byte currentAge = 0;
 
-    // Diagnostics
-    private long hits = 0;
-    private long misses = 0;
-    private long cutoffs = 0;
+    // Diagnostics (LongAdder for thread-safe lock-free tracking under Lazy SMP)
+    private final LongAdder hits = new LongAdder();
+    private final LongAdder misses = new LongAdder();
+    private final LongAdder cutoffs = new LongAdder();
 
     public TranspositionTable() {
         this(DEFAULT_SIZE_BITS);
@@ -91,9 +92,9 @@ public final class TranspositionTable {
         Arrays.fill(tableDepths, (byte) 0);
         Arrays.fill(tableFlags, FLAG_NONE);
         Arrays.fill(tableAges, (byte) 0);
-        this.hits = 0;
-        this.misses = 0;
-        this.cutoffs = 0;
+        this.hits.reset();
+        this.misses.reset();
+        this.cutoffs.reset();
     }
 
     /**
@@ -113,10 +114,10 @@ public final class TranspositionTable {
     public int probe(long zobristHash) {
         int index = (int) (zobristHash & mask);
         if (tableKeys[index] == zobristHash && tableFlags[index] != FLAG_NONE) {
-            hits++;
+            hits.increment();
             return index;
         }
-        misses++;
+        misses.increment();
         return -1;
     }
 
@@ -128,6 +129,11 @@ public final class TranspositionTable {
      * 2. If same position, overwrite if new depth >= old depth or age differs.
      * 3. If collision with different position: replace if old entry is from a previous search
      *    age (stale) or if new search depth >= old search depth (depth-preferred).
+     *
+     * Lazy SMP Concurrency Note:
+     * Payload fields (depth, flag, score, move, age) are written BEFORE tableKeys[index].
+     * Probing threads verifying tableKeys[index] == zobristHash only observe the match
+     * after the payload has been committed, preventing torn reads under lockless shared access.
      */
     public void record(long zobristHash, int depth, int score, byte flag, int bestMove, int ply) {
         int index = (int) (zobristHash & mask);
@@ -141,7 +147,6 @@ public final class TranspositionTable {
                 || (!isOldSameKey && (isStale || isDeeperOrEqual));
 
         if (shouldReplace) {
-            tableKeys[index] = zobristHash;
             tableDepths[index] = (byte) depth;
             tableFlags[index] = flag;
             tableAges[index] = currentAge;
@@ -155,6 +160,9 @@ public final class TranspositionTable {
 
             // Normalize terminal score to be ply-independent
             tableScores[index] = scoreToTt(score, ply);
+
+            // Key published last for lockless reader consistency
+            tableKeys[index] = zobristHash;
         }
     }
 
@@ -175,7 +183,7 @@ public final class TranspositionTable {
     }
 
     public void recordCutoff() {
-        cutoffs++;
+        cutoffs.increment();
     }
 
     /**
@@ -209,14 +217,14 @@ public final class TranspositionTable {
     }
 
     public long getHits() {
-        return hits;
+        return hits.sum();
     }
 
     public long getMisses() {
-        return misses;
+        return misses.sum();
     }
 
     public long getCutoffs() {
-        return cutoffs;
+        return cutoffs.sum();
     }
 }

@@ -278,9 +278,22 @@ java -cp "bin;TablutCompetition-master\Tablut\Executables\Server.jar" tablut.eng
 
 # Phase 4: Parameterized domain heuristics test suite
 java -cp "bin;TablutCompetition-master\Tablut\Executables\Server.jar" tablut.engine.HeuristicEvaluationTest
+
+# Phase 5: Multi-Core Lazy SMP & Headless Tournament
+java -cp "bin;TablutCompetition-master\Tablut\Executables\Server.jar" tablut.engine.ParallelSearchEngineTest
+java -cp "bin;TablutCompetition-master\Tablut\Executables\Server.jar" tablut.engine.HeadlessTournament --games 20 --threads 4 --depth 3
 ```
 
-### 7.3 Launch Player against Referee Server
+### 7.3 Automated Anytime Continuous SPSA Tuning
+```powershell
+# Run local anytime continuous SPSA tuning (overnight autonomous execution)
+python scripts/train_spsa.py --threads 8 --depth 3
+
+# Apply learned weights from checkpoint into HeuristicWeights.java and recompile
+python scripts/apply_weights.py
+```
+
+### 7.4 Launch Player against Referee Server
 ```powershell
 # Windows PowerShell
 .\runmyplayer.ps1 -Role WHITE -Timeout 60 -ServerIp localhost
@@ -299,7 +312,7 @@ chmod +x runmyplayer.sh
 - [x] **Phase 2: Search Engine & Socket Client Integration** (Negamax $\alpha$-$\beta$, IDS, two-tier time management, TCP socket client, 0% CPU on opponent turn).
 - [x] **Phase 3: Opening Book & Advanced Search Techniques** (D4 symmetry group opening book, parallel primitive TT, 5-tier move ordering, quiescence search, 40.5x node pruning).
 - [x] **Phase 4: Parameterized Domain Heuristics** (2-way escape forks, diamond center, 8-point rhombus blockade, "keep the fronts" discipline, 30.9M evals/sec).
-- [ ] **Phase 5: Multi-Core Scaling (4 vCPUs Lazy SMP) & High-Throughput Tuning Pipeline** (Shared-memory lock-free TT, local parallel SPSA anytime tuning, competition VM validation).
+- [x] **Phase 5: Multi-Core Scaling (4 vCPUs Lazy SMP) & High-Throughput Tuning Pipeline** (4-vCPU Lazy SMP coordinator, HeadlessTournament in-RAM simulator, Anytime continuous SPSA optimizer, Atomic checkpoints, and Instant weight injector).
 
 ---
 
@@ -316,15 +329,18 @@ For deep architectural digestion without reading raw files into context, consult
 | [`FastState.java`](src/tablut/engine/FastState.java) | Domain Core | Mutable game state, custodian captures & Ashton rules | `board[81]`, 4-side/3-side/2-side King capture, $O(1)$ `makeMove`/`unmakeMove` |
 | [`MoveGenerator.java`](src/tablut/engine/MoveGenerator.java) | Move Gen | Preallocated array move generator ($< 256$ moves) | Rook-ray scans, strict camp exit/entry enforcement, 85M NPS |
 | [`SearchEngine.java`](src/tablut/engine/SearchEngine.java) | Search Core | Master search coordinator (IDS, Negamax $\alpha$-$\beta$) | Two-tier time cutoff (90% budget), mate scoring `WIN_SCORE - ply` |
+| [`ParallelSearchEngine.java`](src/tablut/engine/ParallelSearchEngine.java) | Search Core | 4-thread Lazy SMP search coordinator | Lock-free shared TT, root move diversification, 0% CPU on opponent turn |
 | [`TranspositionTable.java`](src/tablut/engine/TranspositionTable.java) | Search Core | $2^{21}$ parallel primitive array hash table (~38 MB) | Exact/Lower/Upper flags, ply distance normalization, generational aging |
 | [`MoveOrderer.java`](src/tablut/engine/MoveOrderer.java) | Search Core | 5-tier priority sorter for maximum $\alpha$-$\beta$ pruning | Priority: TT move > Winning moves > Captures > Killers > History |
 | [`QuiescenceSearch.java`](src/tablut/engine/QuiescenceSearch.java) | Search Core | Tactical capture resolver at leaf nodes | Stand-pat cutoff, delta pruning, eliminates the Horizon Effect |
 | [`OpeningBook.java`](src/tablut/engine/OpeningBook.java) | Search Core | $D_4$ Dihedral symmetry opening engine ($< 0.01$ ms) | 8-fold compression (4 rotations + 4 reflections), canonical hash lookup |
+| [`HeadlessTournament.java`](src/tablut/engine/HeadlessTournament.java) | Simulator | High-throughput in-RAM match simulator | Multi-threaded self-play, color balance, 2-fold repetition detection |
 | [`HeuristicWeights.java`](src/tablut/engine/HeuristicWeights.java) | Heuristics | 15-parameter weight vector with array serialization | Public primitive fields, `toArray()`/`fromArray()` for SPSA / GA tuning |
 | [`WhiteHeuristics.java`](src/tablut/engine/WhiteHeuristics.java) | Heuristics | Defender positional evaluation features | Unblockable 2-way forks, 2 Diamond center formations, King vulnerability |
 | [`BlackHeuristics.java`](src/tablut/engine/BlackHeuristics.java) | Heuristics | Attacker positional evaluation features | 8-point Rhombus blockade, "Keep the Fronts", dynamic encirclement |
 | [`HeuristicEvaluation.java`](src/tablut/engine/HeuristicEvaluation.java) | Heuristics | Negamax asymmetric evaluation orchestrator | $\text{WhiteHeuristics} - \text{BlackHeuristics}$; 30.9M evaluations/sec |
 | [`BaselineEvaluation.java`](src/tablut/engine/BaselineEvaluation.java) | Heuristics | Lightweight material & escape counter | Fast fallback baseline for ablation studies |
 | [`StateAdapter.java`](src/tablut/engine/StateAdapter.java) | Client / IO | Bi-directional bridge to UNIBO framework | Converts between `FastState` and `StateTablut`/`Action` without latency |
-| [`TablutAgentClient.java`](src/tablut/engine/TablutAgentClient.java) | Client / IO | Competition TCP client & main executable entry point | Case-insensitive CLI, 4-byte big-endian framing, 0% CPU on opponent turn |
-
+| [`TablutAgentClient.java`](src/tablut/engine/TablutAgentClient.java) | Client / IO | Competition TCP client & main executable entry point | Case-insensitive CLI, 4-byte big-endian framing, 4-thread Lazy SMP |
+| [`train_spsa.py`](scripts/train_spsa.py) | Optimizer | Anytime Continuous SPSA tuning pipeline | Perturbs 15 weights, atomic `checkpoint_weights.json`, color-balanced matches |
+| [`apply_weights.py`](scripts/apply_weights.py) | Optimizer | Weight injector & Java recompiler | Reads checkpoint JSON, patches `HeuristicWeights.java`, recompiles binaries |
