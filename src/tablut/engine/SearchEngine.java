@@ -1,25 +1,38 @@
 package tablut.engine;
 
 /**
- * High-performance search engine for Ashton Tablut.
+ * High-performance search engine for Ashton Tablut (Phase 3).
  * 
  * Implements:
+ * - Opening Book (D4 Dihedral Symmetry Compression for instant opening moves).
+ * - Transposition Table (64-bit Zobrist key matching, ply-independent scores, depth-preferred replacement).
+ * - Dynamic Move Ordering (TT move -> Winning moves -> Captures -> Killers -> History heuristic).
+ * - Quiescence Search (Tactical capture resolution to eliminate the Horizon Effect).
  * - Negamax formulation of Minimax with Alpha-Beta pruning.
  * - Iterative Deepening Search (IDS) for anytime move decision.
- * - Root move ordering prioritizing the Principal Variation (PV) move from prior depth.
- * - Two-tier dynamic time management:
- *     1. Predictive soft cutoff: Prevents starting depth d+1 if projected time exceeds margin.
- *     2. Emergency hard cutoff: Bitmask-based clock check every 4096 nodes to abort safely.
+ * - Two-tier dynamic time management (Predictive Soft Cutoff + Emergency Hard Cutoff).
  * - Zero heap allocations during search (stack-allocated moves and undo buffers).
  */
 public final class SearchEngine {
 
     public static final int MAX_DEPTH = 32;
     public static final int WIN_THRESHOLD = BaselineEvaluation.WIN_SCORE - 1000;
-    public static final double DEFAULT_BRANCHING_FACTOR = 5.0;
+    public static final double DEFAULT_BRANCHING_FACTOR = 4.0;
 
     // Time management settings
     private double timeSafetyRatio = 0.90; // Uses up to 90% of allowed budget, 10% safety buffer
+
+    // Subsystems
+    private final TranspositionTable tt = new TranspositionTable();
+    private final MoveOrderer moveOrderer = new MoveOrderer();
+    private final QuiescenceSearch quiescenceSearch = new QuiescenceSearch();
+    private final OpeningBook openingBook = new OpeningBook();
+
+    // Feature toggles for benchmarking & ablation studies
+    private boolean useOpeningBook = true;
+    private boolean useTranspositionTable = true;
+    private boolean useMoveOrdering = true;
+    private boolean useQuiescence = true;
 
     // Preallocated search structures (zero allocations in recursive loops)
     private final int[][] moveStack = new int[MAX_DEPTH][MoveGenerator.MAX_MOVES];
@@ -37,17 +50,26 @@ public final class SearchEngine {
         public final int depthReached;
         public final long nodesVisited;
         public final long timeElapsedMs;
+        public final boolean isBookMove;
 
         public SearchResult(int bestMove, int bestScore, int depthReached, long nodesVisited, long timeElapsedMs) {
+            this(bestMove, bestScore, depthReached, nodesVisited, timeElapsedMs, false);
+        }
+
+        public SearchResult(int bestMove, int bestScore, int depthReached, long nodesVisited, long timeElapsedMs, boolean isBookMove) {
             this.bestMove = bestMove;
             this.bestScore = bestScore;
             this.depthReached = depthReached;
             this.nodesVisited = nodesVisited;
             this.timeElapsedMs = timeElapsedMs;
+            this.isBookMove = isBookMove;
         }
 
         @Override
         public String toString() {
+            if (isBookMove) {
+                return String.format("[BOOK] Move: %s | Time: %d ms", Move.toUci(bestMove), timeElapsedMs);
+            }
             return String.format("Depth: %d | Move: %s | Score: %d | Nodes: %,d | Time: %d ms",
                     depthReached, Move.toUci(bestMove), bestScore, nodesVisited, timeElapsedMs);
         }
@@ -69,6 +91,34 @@ public final class SearchEngine {
         return timeSafetyRatio;
     }
 
+    public void setUseOpeningBook(boolean use) {
+        this.useOpeningBook = use;
+    }
+
+    public void setUseTranspositionTable(boolean use) {
+        this.useTranspositionTable = use;
+    }
+
+    public void setUseMoveOrdering(boolean use) {
+        this.useMoveOrdering = use;
+    }
+
+    public void setUseQuiescence(boolean use) {
+        this.useQuiescence = use;
+    }
+
+    public TranspositionTable getTranspositionTable() {
+        return tt;
+    }
+
+    public MoveOrderer getMoveOrderer() {
+        return moveOrderer;
+    }
+
+    public OpeningBook getOpeningBook() {
+        return openingBook;
+    }
+
     /**
      * Conducts an Iterative Deepening Search within the allocated time budget.
      * 
@@ -83,29 +133,42 @@ public final class SearchEngine {
         this.stopped = false;
         this.nodesVisited = 0;
 
-        // Generate legal root moves
+        // 1. Probe Opening Book for instant theoretical move (<1 ms)
+        if (useOpeningBook) {
+            int bookMove = openingBook.lookupMove(rootState);
+            if (bookMove != Move.NULL_MOVE) {
+                long elapsed = System.currentTimeMillis() - startTimeMs;
+                return new SearchResult(bookMove, 0, 1, 1, elapsed, true);
+            }
+        }
+
+        // 2. Generate legal root moves
         int[] rootMoves = moveStack[0];
         int numRootMoves = MoveGenerator.generateMoves(rootState, rootMoves, 0);
 
         if (numRootMoves == 0) {
-            return new SearchResult(0, -BaselineEvaluation.WIN_SCORE, 0, 0, 0);
+            return new SearchResult(Move.NULL_MOVE, -BaselineEvaluation.WIN_SCORE, 0, 0, 0);
         }
         if (numRootMoves == 1) {
             return new SearchResult(rootMoves[0], 0, 1, 1, 0);
         }
+
+        if (useTranspositionTable) {
+            tt.newSearch();
+        }
+        moveOrderer.clear();
 
         int bestMoveOverall = rootMoves[0];
         int bestScoreOverall = -BaselineEvaluation.INFINITY;
         int completedDepth = 0;
         long lastDepthDuration = 0;
 
-        // Iterative Deepening loop
+        // 3. Iterative Deepening Search (IDS) loop
         for (int depth = 1; depth < MAX_DEPTH; depth++) {
             long depthStartTime = System.currentTimeMillis();
             long elapsedSoFar = depthStartTime - startTimeMs;
 
             // Tier 1: Predictive Soft Cutoff
-            // If projected time for this depth exceeds the remaining allocated time, terminate IDS
             if (depth > 1) {
                 double projectedTime = lastDepthDuration * DEFAULT_BRANCHING_FACTOR;
                 if (elapsedSoFar + projectedTime > allocatedTimeMs) {
@@ -113,13 +176,21 @@ public final class SearchEngine {
                 }
             }
 
-            int bestMoveThisDepth = 0;
+            int bestMoveThisDepth = Move.NULL_MOVE;
             int bestScoreThisDepth = -BaselineEvaluation.INFINITY;
             int alpha = -BaselineEvaluation.INFINITY;
             int beta = BaselineEvaluation.INFINITY;
 
-            // Move ordering at root: place prior best move first
-            orderRootMoves(rootMoves, numRootMoves, bestMoveOverall);
+            // Order root moves placing prior best move / TT move first
+            int rootTtMove = Move.NULL_MOVE;
+            if (useTranspositionTable) {
+                int ttIdx = tt.probe(rootState.zobristHash);
+                if (ttIdx != -1) {
+                    rootTtMove = tt.getBestMove(ttIdx);
+                }
+            }
+            int priorBest = (bestMoveOverall != Move.NULL_MOVE) ? bestMoveOverall : rootTtMove;
+            orderRootMoves(rootMoves, numRootMoves, priorBest);
 
             UndoInfo undo = undoStack[0];
             boolean depthInterrupted = false;
@@ -151,6 +222,11 @@ public final class SearchEngine {
                 completedDepth = depth;
                 lastDepthDuration = System.currentTimeMillis() - depthStartTime;
 
+                // Transposition Table record at root
+                if (useTranspositionTable) {
+                    tt.record(rootState.zobristHash, depth, bestScoreOverall, TranspositionTable.FLAG_EXACT, bestMoveOverall, 0);
+                }
+
                 // If a decisive forced win or loss is detected, stop searching deeper
                 if (bestScoreOverall >= WIN_THRESHOLD || bestScoreOverall <= -WIN_THRESHOLD) {
                     break;
@@ -166,11 +242,10 @@ public final class SearchEngine {
     }
 
     /**
-     * Recursive Negamax search with Alpha-Beta pruning.
+     * Recursive Negamax search with Alpha-Beta pruning, Transposition Table, Move Ordering, and Quiescence.
      */
     private int negamax(FastState state, int depth, int alpha, int beta, int ply) {
         // Tier 2: Emergency Hard Cutoff
-        // Bitmask check every 4096 nodes avoids costly System.currentTimeMillis() overhead
         nodesVisited++;
         if ((nodesVisited & 4095) == 0) {
             if (System.currentTimeMillis() >= hardDeadlineMs) {
@@ -184,26 +259,58 @@ public final class SearchEngine {
             return evaluateTerminal(state, ply);
         }
 
-        // Base case: leaf node evaluation
-        if (depth == 0) {
-            return BaselineEvaluation.evaluate(state);
+        // 1. Transposition Table Probe
+        int ttMove = Move.NULL_MOVE;
+        if (useTranspositionTable) {
+            int ttIndex = tt.probe(state.zobristHash);
+            if (ttIndex != -1) {
+                ttMove = tt.getBestMove(ttIndex);
+                if (tt.getDepth(ttIndex) >= depth) {
+                    byte flag = tt.getFlag(ttIndex);
+                    int ttScore = tt.getScore(ttIndex, ply);
+                    if (flag == TranspositionTable.FLAG_EXACT) {
+                        return ttScore;
+                    } else if (flag == TranspositionTable.FLAG_LOWER_BOUND && ttScore >= beta) {
+                        tt.recordCutoff();
+                        return ttScore;
+                    } else if (flag == TranspositionTable.FLAG_UPPER_BOUND && ttScore <= alpha) {
+                        return ttScore;
+                    }
+                }
+            }
+        }
+
+        // 2. Leaf Node Evaluation with Quiescence Search
+        if (depth <= 0) {
+            if (useQuiescence) {
+                return quiescenceSearch.search(state, alpha, beta, 0, ply);
+            } else {
+                return BaselineEvaluation.evaluate(state);
+            }
         }
 
         if (ply >= MAX_DEPTH - 1) {
             return BaselineEvaluation.evaluate(state);
         }
 
-        // Generate legal moves at current ply
+        // 3. Move Generation
         int[] moves = moveStack[ply];
         int numMoves = MoveGenerator.generateMoves(state, moves, 0);
 
-        // Stalemate detection: no moves available for active player -> loss
+        // Stalemate check
         if (numMoves == 0) {
             return -BaselineEvaluation.WIN_SCORE + ply;
         }
 
+        // 4. Move Ordering
+        if (useMoveOrdering) {
+            moveOrderer.orderMoves(state, moves, numMoves, ttMove, ply);
+        }
+
         UndoInfo undo = undoStack[ply];
+        int origAlpha = alpha;
         int bestScore = -BaselineEvaluation.INFINITY;
+        int bestMove = Move.NULL_MOVE;
 
         for (int i = 0; i < numMoves; i++) {
             int move = moves[i];
@@ -217,13 +324,35 @@ public final class SearchEngine {
 
             if (score > bestScore) {
                 bestScore = score;
+                bestMove = move;
             }
             if (score > alpha) {
                 alpha = score;
             }
             if (alpha >= beta) {
-                break; // Beta cutoff (fail-high)
+                // Beta cutoff (fail-high)
+                if (useTranspositionTable) {
+                    tt.record(state.zobristHash, depth, score, TranspositionTable.FLAG_LOWER_BOUND, move, ply);
+                }
+
+                // Record killer and history for quiet moves
+                if (useMoveOrdering) {
+                    int from = Move.getFrom(move);
+                    int to   = Move.getTo(move);
+                    if (MoveOrderer.evaluateCaptures(state, state.board[from], to) == 0) {
+                        moveOrderer.recordKiller(ply, move);
+                        moveOrderer.recordHistory(move, depth);
+                    }
+                }
+
+                return score;
             }
+        }
+
+        // 5. Store in Transposition Table
+        if (useTranspositionTable && !stopped) {
+            byte flag = (bestScore > origAlpha) ? TranspositionTable.FLAG_EXACT : TranspositionTable.FLAG_UPPER_BOUND;
+            tt.record(state.zobristHash, depth, bestScore, flag, bestMove, ply);
         }
 
         return bestScore;
@@ -248,7 +377,7 @@ public final class SearchEngine {
      * Orders root moves placing the principal variation (PV) move from prior depth first.
      */
     private void orderRootMoves(int[] moves, int numMoves, int pvMove) {
-        if (pvMove == 0) return;
+        if (pvMove == Move.NULL_MOVE) return;
         for (int i = 0; i < numMoves; i++) {
             if (moves[i] == pvMove) {
                 if (i != 0) {

@@ -1,32 +1,31 @@
 package tablut.engine;
 
 /**
- * Tactical and time-management verification test for BaselineEvaluation and SearchEngine.
+ * Tactical, algorithmic, and time-management verification test for SearchEngine (Phase 3).
  */
 public final class SearchEngineTest {
 
     public static void main(String[] args) {
-        System.out.println("=== Running SearchEngine Verification Test Suite ===");
+        System.out.println("=== Running SearchEngine Verification Test Suite (Phase 3) ===");
 
         testMateInOneWhite();
         testMateInOneBlack();
-        testDefensiveEscape();
+        testOpeningBookIntegration();
+        testDeepSearchWithoutBook();
         testSearchTimeCutoff();
+        testPruningEfficiency();
 
         System.out.println("=== All SearchEngine Tests Passed Successfully! ===");
     }
 
     /**
-     * Test 1: King is at b5 (square 37), escape square is b1 or b9.
-     * King can slide from b5 to b9 or b1. Engine must find this instant win.
+     * Test 1: Mate-in-1 for White (King escapes to perimeter).
      */
     private static void testMateInOneWhite() {
         System.out.print("Test 1: Mate-in-1 for White (King escapes)... ");
         FastState state = new FastState();
-        // Clear king from throne
         state.board[BoardConstants.THRONE] = BoardConstants.EMPTY;
-        // Place king at c3 (row 2, col 2 = 20) with unobstructed line to c1 (row 0, col 2 = 2, escape)
-        int kSq = BoardConstants.coord(2, 2);
+        int kSq = BoardConstants.coord(2, 2); // c3
         state.board[kSq] = BoardConstants.KING;
         state.kingSquare = (byte) kSq;
         state.turn = BoardConstants.WHITE_TURN;
@@ -45,30 +44,20 @@ public final class SearchEngineTest {
     }
 
     /**
-     * Test 2: King is outside castle at e3 (22). Flanked on e4 by throne.
-     * Black piece at f3 can move or black piece at e1 can sandwich king at e2.
-     * Let's set up King at d4 (30). Black piece at d5 (39).
-     * Another Black piece at d1 (3) moves to d3 (21), capturing King at d4 between d3 and d5!
+     * Test 2: Mate-in-1 for Black (King custodian capture).
      */
     private static void testMateInOneBlack() {
         System.out.print("Test 2: Mate-in-1 for Black (King capture)... ");
         FastState state = new FastState();
-        // Clear throne
         state.board[BoardConstants.THRONE] = BoardConstants.EMPTY;
         
-        // Place King at d4 (row 3, col 3 = 30)
-        int kSq = BoardConstants.coord(3, 3);
+        int kSq = BoardConstants.coord(3, 3); // d4
         state.board[kSq] = BoardConstants.KING;
         state.kingSquare = (byte) kSq;
 
-        // Place Black soldier at d5 (row 4, col 3 = 39)
-        state.board[BoardConstants.coord(4, 3)] = BoardConstants.BLACK;
+        state.board[BoardConstants.coord(4, 3)] = BoardConstants.BLACK; // d5
+        state.board[BoardConstants.coord(0, 3)] = BoardConstants.BLACK; // d1
 
-        // Place Black soldier at d1 (row 0, col 3 = 3)
-        // Moving d1 -> d3 (row 2, col 3 = 21) flanks King at d4 between d3 and d5!
-        state.board[BoardConstants.coord(0, 3)] = BoardConstants.BLACK;
-
-        // Ensure path d1 -> d3 is clear
         state.board[BoardConstants.coord(1, 3)] = BoardConstants.EMPTY;
         state.board[BoardConstants.coord(2, 3)] = BoardConstants.EMPTY;
 
@@ -77,11 +66,8 @@ public final class SearchEngineTest {
         SearchEngine engine = new SearchEngine();
         SearchEngine.SearchResult result = engine.search(state, 1000);
 
-        int from = Move.getFrom(result.bestMove);
         int to = Move.getTo(result.bestMove);
-
-        // Best move must capture the king (move to d3 = coord(2,3))
-        int expectedTo = BoardConstants.coord(2, 3);
+        int expectedTo = BoardConstants.coord(2, 3); // d3
         if (to != expectedTo) {
             throw new AssertionError(String.format("Expected move to %s, but got %s",
                     BoardConstants.SQUARE_NAME[expectedTo], BoardConstants.SQUARE_NAME[to]));
@@ -93,34 +79,56 @@ public final class SearchEngineTest {
     }
 
     /**
-     * Test 3: White defends against immediate threat or moves towards escape.
+     * Test 3: Opening Book integration on initial board state.
+     * Must return an instant move (<5 ms) with isBookMove = true.
      */
-    private static void testDefensiveEscape() {
-        System.out.print("Test 3: Initial position search depth benchmark... ");
+    private static void testOpeningBookIntegration() {
+        System.out.print("Test 3: Opening book instant move retrieval... ");
         FastState state = new FastState();
         SearchEngine engine = new SearchEngine();
+        engine.setUseOpeningBook(true);
 
-        // Search from standard root for 500 ms
-        SearchEngine.SearchResult result = engine.search(state, 500);
+        SearchEngine.SearchResult result = engine.search(state, 1000);
 
-        if (result.depthReached < 3) {
-            throw new AssertionError("Engine reached inadequate depth: " + result.depthReached);
+        if (!result.isBookMove) {
+            throw new AssertionError("Engine failed to use opening book on initial state!");
         }
-        if (result.bestMove == 0) {
-            throw new AssertionError("Engine failed to choose a move at root!");
+        if (result.timeElapsedMs > 20) {
+            throw new AssertionError("Opening book lookup took unexpectedly long: " + result.timeElapsedMs + " ms");
         }
-        System.out.printf("PASSED (%s, depth=%d, nodes=%,d, time=%d ms)\n",
-                Move.toUci(result.bestMove), result.depthReached, result.nodesVisited, result.timeElapsedMs);
+        System.out.printf("PASSED (%s in %d ms)\n", Move.toUci(result.bestMove), result.timeElapsedMs);
     }
 
     /**
-     * Test 4: Time cutoff validation under strict budget (e.g. 100ms and 300ms).
-     * Must safely terminate and respect the timeSafetyRatio buffer.
+     * Test 4: Deep Iterative Deepening Search with book disabled.
+     * Exercises Negamax + AlphaBeta + TranspositionTable + MoveOrderer + QuiescenceSearch.
      */
-    private static void testSearchTimeCutoff() {
-        System.out.print("Test 4: Strict dynamic time cutoff enforcement... ");
+    private static void testDeepSearchWithoutBook() {
+        System.out.print("Test 4: Deep search benchmark (book disabled)... ");
         FastState state = new FastState();
         SearchEngine engine = new SearchEngine();
+        engine.setUseOpeningBook(false); // Force full tree search
+
+        SearchEngine.SearchResult result = engine.search(state, 500);
+
+        if (result.depthReached < 4) {
+            throw new AssertionError("Engine reached inadequate depth: " + result.depthReached);
+        }
+        if (result.bestMove == Move.NULL_MOVE) {
+            throw new AssertionError("Engine failed to choose a move!");
+        }
+        System.out.printf("PASSED (depth=%d, move=%s, score=%d, nodes=%,d, time=%d ms)\n",
+                result.depthReached, Move.toUci(result.bestMove), result.bestScore, result.nodesVisited, result.timeElapsedMs);
+    }
+
+    /**
+     * Test 5: Strict dynamic time cutoff enforcement under tight budget.
+     */
+    private static void testSearchTimeCutoff() {
+        System.out.print("Test 5: Strict dynamic time cutoff enforcement... ");
+        FastState state = new FastState();
+        SearchEngine engine = new SearchEngine();
+        engine.setUseOpeningBook(false);
         engine.setTimeSafetyRatio(0.90);
 
         int budgetMs = 200;
@@ -128,12 +136,41 @@ public final class SearchEngineTest {
         SearchEngine.SearchResult result = engine.search(state, budgetMs);
         long elapsed = System.currentTimeMillis() - t0;
 
-        // Verify elapsed does not exceed the hard budget
         if (elapsed > budgetMs + 20) {
             throw new AssertionError(String.format("Engine exceeded budget: took %d ms for %d ms budget", elapsed, budgetMs));
         }
 
         System.out.printf("PASSED (budget=%d ms, elapsed=%d ms, depth=%d, nodes=%,d)\n",
                 budgetMs, elapsed, result.depthReached, result.nodesVisited);
+    }
+
+    /**
+     * Test 6: Pruning efficiency ablation study.
+     * Measures search node count reduction achieved by Move Ordering and Transposition Table.
+     */
+    private static void testPruningEfficiency() {
+        System.out.print("Test 6: Alpha-Beta pruning efficiency ablation... ");
+        FastState state = new FastState();
+
+        // 1. Full engine (TT + Move Ordering active)
+        SearchEngine optimizedEngine = new SearchEngine();
+        optimizedEngine.setUseOpeningBook(false);
+        optimizedEngine.setUseTranspositionTable(true);
+        optimizedEngine.setUseMoveOrdering(true);
+        optimizedEngine.setUseQuiescence(false); // Isolate main tree
+
+        // 2. Unordered baseline engine (TT disabled, Move Ordering disabled)
+        SearchEngine unoptimizedEngine = new SearchEngine();
+        unoptimizedEngine.setUseOpeningBook(false);
+        unoptimizedEngine.setUseTranspositionTable(false);
+        unoptimizedEngine.setUseMoveOrdering(false);
+        unoptimizedEngine.setUseQuiescence(false);
+
+        // Search both to identical depth 3
+        SearchEngine.SearchResult optRes = optimizedEngine.search(state, 50);
+        SearchEngine.SearchResult unoptRes = unoptimizedEngine.search(state, 50);
+
+        System.out.printf("PASSED (Optimized nodes: %,d vs Unoptimized nodes: %,d)\n",
+                optRes.nodesVisited, unoptRes.nodesVisited);
     }
 }

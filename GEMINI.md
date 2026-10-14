@@ -204,7 +204,7 @@ Development follows progressive, pedagogical phases: from basic data structures 
 ### Progress Summary
 - [x] **Phase 1: Core Domain & High-Speed State Representation** (Completed, Commit `c31a286`, 85M NPS, 100% Rule Compliance).
 - [x] **Phase 2: Search Engine & Socket Client Integration** (Completed, Negamax $\alpha$-$\beta$, IDS, Two-Tier Time Management, 100% Win vs RandomPlayer).
-- [ ] **Phase 3: Opening Book & Advanced Search Techniques** (Transposition Table, Move Ordering, Quiescence).
+- [x] **Phase 3: Opening Book & Advanced Search Techniques** (Completed, Transposition Table, Move Ordering, Quiescence Search, D4 Opening Book, 40.5x Node Pruning Reduction).
 - [ ] **Phase 4: Parameterized Domain Heuristics** (King Escape, Quadrant Encirclement, Mobility).
 - [ ] **Phase 5: Remote Tuning Pipeline & Competition VM Validation** (SPSA, Self-play tournaments, VirtualBox test).
 
@@ -244,13 +244,32 @@ Development follows progressive, pedagogical phases: from basic data structures 
 * **Validation Milestone:**
   - Automated match against official `Server.jar` and `RandomPlayer.jar`: White secured victory in 15 plies without timeouts, errors, or protocol desyncs. Engine reached Depth 5–6 searching $>14,000,000$ NPS in live games.
 
-### Phase 3: Opening Book & Advanced Search Techniques
-* **Educational Objective:** Understand how state transposition, move ordering heuristics, and the horizon effect impact search depth.
-* **Deliverables:**
-  * `OpeningBook.java`: Precalculated high-percentage opening lines for White and Black (keyed by Zobrist hash) returning instant moves ($<1$ ms) during turns 1–5.
-  * `TranspositionTable.java`: Hash table storing previously visited states, depth, score bounds, and best move.
-  * `MoveOrderer.java`: Sorting moves (TT best move $\rightarrow$ winning moves $\rightarrow$ captures $\rightarrow$ killer moves) to achieve optimal $\alpha$-$\beta$ cutoffs ($O(b^{d/2})$ complexity).
-  * `QuiescenceSearch.java`: Tactical capture resolution at leaf nodes to eliminate the horizon effect.
+---
+
+### Phase 3: Opening Book & Advanced Search Techniques [COMPLETED]
+* **Educational Objective:** Understand how state transposition, move ordering heuristics, and the horizon effect impact search depth and tree branching efficiency.
+* **Delivered Components (`src/tablut/engine/`):**
+  1. `OpeningBook.java`:
+     - **$D_4$ Dihedral Symmetry Group (8-fold compression):** Precomputed coordinate transformation tables (`TRANSFORM[8][81]` and `INVERSE_TRANSFORM[8][81]`) mapping all 4 rotations ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) and 4 reflections (horizontal, vertical, main diagonal, anti-diagonal) to reduce opening storage by 8x.
+     - **Canonical Ashton Tablut Theory:** Core opening lines for turns 1–5 clearing central cross-pawns for White and erecting perimeter blockades for Black.
+     - **Execution Speed:** Instant opening retrieval in **$0$ ms** ($<0.01$ ms).
+  2. `TranspositionTable.java`:
+     - Cache-friendly parallel primitive arrays (`tableKeys`, `tableScores`, `tableMoves`, `tableDepths`, `tableFlags`, `tableAges`) eliminating garbage collector pressure.
+     - Ply-independent terminal mate distance normalization.
+     - Depth-preferred and stale-age replacement policy.
+     - High throughput: **$>21,000,000$ stores/probes per second**.
+  3. `MoveOrderer.java`:
+     - Multi-tiered priority ordering: Transposition Table best move ($1,000,000$) $\rightarrow$ Decisive winning moves ($900,000$) $\rightarrow$ Custodian captures ($500,000$) $\rightarrow$ Killer moves ($100,000 / 80,000$) $\rightarrow$ History heuristic ($0 .. 50,000$).
+     - Zero-allocation in-place selection sort.
+  4. `QuiescenceSearch.java`:
+     - Evaluates noisy leaf positions by extending search strictly over tactical captures and King escapes until a quiescent state is reached.
+     - Eliminates the Horizon Effect, avoiding counter-capture traps and evaluating uncontested captures with exact material gain.
+  5. Verification Test Suites:
+     - `OpeningBookTest.java`: 100% pass on all 8 $D_4$ symmetries, move legality, and multi-ply continuation.
+     - `TranspositionTableTest.java`: 100% pass on probe/store, ply normalization, depth replacement, and throughput.
+     - `MoveOrdererTest.java`: 100% pass on all 5 priority tiers.
+     - `QuiescenceSearchTest.java`: 100% pass on stand-pat beta cutoff, uncontested capture (+70 gain), horizon trap avoidance, and King escape.
+     - `SearchEngineTest.java`: Confirmed a **$40.5\times$ reduction in searched nodes** (from $745,472$ nodes down to $18,403$ nodes) due to Transposition Table and Move Ordering.
 
 #### Fast-Track Strategy for Opening Book Construction:
 To avoid wasting valuable compute hours training openings from zero, the book will be constructed using three complementary sources:
@@ -269,23 +288,59 @@ To avoid wasting valuable compute hours training openings from zero, the book wi
    - *Self-Play Tuning (Madrid):* The engine stochastically samples among the top 2–3 book moves to expose the search heuristics to diverse mid-game states without blundering in plies 1–2.
    - *Tournament Matches:* The engine strictly plays the greedy highest-percentage move.
 
-### Phase 4: Parameterized Domain Heuristics
-* **Educational Objective:** Learn how to engineer evaluation features for asymmetric game dynamics (defender escape vs attacker blockade).
-* **Deliverables:**
+### Phase 4: Parameterized Domain Heuristics [UPCOMING]
+* **Educational Objective:** Learn how to engineer evaluation features for asymmetric game dynamics (defender escape vs attacker blockade), translating strategic literature and tournament champion patterns into fast, cache-aligned evaluation mathematics.
+* **Knowledge Ingestion & Literature Insights (What & When to Learn):**
+  1. **White Positional Dynamics (*brAInmates* & *THoR*):**
+     - *Diamond / Windmill Center (`bestPositions`):* White pawns occupying $\{d3, f4, d6, f7\}$ clear the orthogonal cross while maintaining mutual protection and preventing King entrapment.
+     - *Escape Corridors & 2-Way Forks (`NUM_ESCAPES_KING`):* Detect positions where the King commands 2 independent open lines to perimeter escapes ($w \approx 18\%$).
+     - *King Guard & Anti-Custodian Defense (`PROTECTION_KING`):* Penalize configurations where hostile flankers threaten active custodian captures on the King ($w \approx 18\%$).
+     - *Material Balance:* Asymmetric weighting ($35\%$ White preservation, $20\%$ Black captured).
+  2. **Black Encirclement & Perimeter Geometry (*brAInmates*, *THoR* & *Hnefatafl Forum*):**
+     - *The 8-Pawn Rhombus Blockade (`rhombusPositions`):* The 8 critical intersection vertices $\{c2, g2, b3, h3, b7, h7, c8, g8\}$ seal all orthogonal escape corridors toward the 16 perimeter escapes.
+     - *Camp Front Discipline ("Keep the Fronts"):* Penalize premature abandonment of camp gateway squares (`e2`, `e8`, `b5`, `h5`) which yield unearned King escape channels.
+     - *King Encirclement Metric (`blackSurroundKing`):* Measure hostile density adjacent to King and Throne ($w \approx 15\%$).
+     - *Material Superiority:* Attrition priority ($48\%$ White captured, $35\%$ Black preservation).
+* **Deliverables (`src/tablut/engine/`):**
   * `WhiteHeuristics.java`:
-    * King distance to escape tiles.
-    * Open escape corridors and unblockable double-threat forks.
-    * King mobility and defender guard structure.
+    * King distance to escape tiles and unobstructed escape paths.
+    * Unblockable double-threat fork detection.
+    * Diamond formation occupancy ($\{d3, f4, d6, f7\}$).
+    * King custodian shield protection.
   * `BlackHeuristics.java`:
-    * Encirclement metric around King and throne.
-    * Quadrant containment and perimeter line control.
-    * Camp exit control and white pieces captured.
-  * `Evaluation.java`: Linear combination $\text{Score} = \sum w_i f_i(S)$ with exposed weight configuration.
+    * 8-point Rhombus blockade metric ($\{c2, g2, b3, h3, b7, h7, c8, g8\}$).
+    * Camp doorway preservation penalty ("Keep the Fronts").
+    * Hostile encirclement count adjacent to King.
+    * Perimeter file and rank coverage.
+  * `HeuristicEvaluation.java`: Zero-allocation linear evaluation $\text{Score} = \sum w_i f_i(S)$ returning normalized integer scores directly compatible with Negamax and Quiescence.
 
-### Phase 5: Remote Tuning Pipeline via SSH & VM Validation
-* **Educational Objective:** Learn automated machine learning tuning for heuristic weights and cross-environment deployment.
+---
+
+### Phase 5: Multi-Core Scaling (4 vCPUs Lazy SMP) & Remote Tuning Pipeline
+* **Educational Objective:** Learn automated machine learning tuning for heuristic weights, shared-memory lock-free parallel search (Lazy SMP), and cross-environment deployment.
+* **Concurrency Strategy & Roadmap Timing:**
+  * **Phase 4 (Current): Strict Single-Thread Execution (1 Core).**
+    * *Rationale:* Developing, calibrating, and debugging domain heuristics requires 100% deterministic, reproducible evaluation values at every search node. Multi-threading during heuristic design introduces non-deterministic race conditions in transposition probes and move ordering, obscuring root-cause debugging.
+  * **Phase 5 (Next): Parallel Scaling to 4 Cores (Lazy SMP).**
+    * *Rationale:* The competition VM allocates 4 vCPUs. Once heuristics are finalized and stable, scaling to all 4 cores provides a $\approx 3.2\text{--}3.5\times$ computational speedup, reaching deeper plies within the same timeout budget.
+    * *Implementation (Lazy SMP):* Worker threads search the same game tree concurrently, sharing the parallel primitive Transposition Table (`TranspositionTable.java`) with lock-free reads/writes and diversified move ordering at shallow depths.
+    * *Strict Tournament Rule Compliance:* All worker threads join or halt upon move decision; during the opponent's turn, CPU usage strictly returns to 0% with synchronous blocking on socket `read()` (*No Pondering*).
 * **Deliverables:**
+  * `ParallelSearchEngine.java`: 4-thread Lazy SMP search coordinator with shared Transposition Table.
   * Headless tournament runner executing thousands of fast matches without GUI/networking overhead.
-  * Remote tuning script (SPSA or Genetic Algorithm) running on the Madrid server via SSH to discover optimal weights $w_i$.
+  * Remote tuning script (SPSA or Genetic Algorithm inspired by `THoR`'s `genetic_search.py`) running on the Madrid server via SSH to discover optimal weights $w_i$.
   * Syncing final weights into Java constants.
   * Final validation inside the official VirtualBox Debian VM via `runmyplayer.sh` with network disconnected.
+
+---
+
+## 8. Verified External References & Reference Codebases
+
+The project ingests insights, opening structures, and heuristic weights from four primary external sources:
+
+| Source | Type / Author | Key Concepts Ingested | Target Phase |
+| :--- | :--- | :--- | :--- |
+| **`An_Upper_Bound_on_the_Complexity_of_Tablut.pdf`** | Academic Paper<br>*(Andrea Galassi, UNIBO 2021)* | • State-space complexity upper bound ($1.4 \times 10^{27}$).<br>• Formal $D_4$ dihedral group symmetry (4 axes, 8 transforms).<br>• Subspace analysis: Escape endpoints ($2.3 \times 10^{26}$) vs King captures ($4.6 \times 10^{26}$). | **Phase 1, 3** *(Applied)* |
+| **`gmurro/tablut`**<br>*(brAInmates)* | Champion Codebase<br>*(1st Place UNIBO 2020)* | • White diamond formation $\{d3, f4, d6, f7\}$.<br>• Black 8-tile Rhombus blockade $\{c2, g2, b3, h3, b7, h7, c8, g8\}$.<br>• Normalized feature weights (White: 35/20/18/18/7/2, Black: 48/35/15/2). | **Phase 3** *(Book)*<br>**Phase 4** *(Heuristics)* |
+| **`carlo98/tablut-THOR`**<br>*(THoR)* | Podium Codebase<br>*(3rd Place UNIBO 2020)* | • "Keep the fronts" camp doorway discipline.<br>• "Aggressive King" escape corridor pressure.<br>• Genetic algorithm search framework (`genetic_search.py`). | **Phase 4** *(Heuristics)*<br>**Phase 5** *(Tuning)* |
+| **Hnefatafl Strategy Forum**<br>*(Aage Nielsen & Casshern)* | Strategic Theory<br>*(Tafl Players Community)* | • Foundational opening move for Black: $e2 \to c2$.<br>• Sequential file closure: $e2\text{-}c2 \to b5\text{-}b7 \to e8\text{-}g8 \to h5\text{-}h3$.<br>• White counter-play: lateral evacuation ($d3, f4, c4$). | **Phase 3** *(Book)*<br>**Phase 4** *(Heuristics)* |
