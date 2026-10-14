@@ -7,6 +7,7 @@ This repository contains the development of an autonomous Artificial Intelligenc
 ### 1.1 Role of this Document & AI Assistance
 * This file serves as the **central reference manual** and **context anchor** for both human contributors and AI assistants (e.g., Gemini, Claude) during development.
 * AI tools are used for architecture design, algorithm development, heuristic tuning, code optimization, debugging, and verification against official rules.
+* **Agent Codebase Digest:** For an exhaustive index of all source files, primitive bit-layouts, invariants, and APIs to avoid loading code into context, see [`CODEBASE_MAP.md`](CODEBASE_MAP.md).
 
 ### 1.2 Language & Collaboration Standards
 * **Working Language:** The project is developed collaboratively with international team members.
@@ -187,11 +188,11 @@ The chosen approach combines a **high-performance classical search engine writte
                                             │ Weights (w_1 ... w_n)
                                             │
 +-------------------------------------------┴-------------------------------------------+
-|                          REMOTE TUNING PIPELINE (SSH to Madrid)                       |
+|                     LOCAL HIGH-THROUGHPUT TUNING PIPELINE                             |
 |                                                                                       |
-|   1. Compile Headless Simulator (FastState vs FastState)                              |
-|   2. Run SPSA / Genetic Algorithm / Self-Play Tournaments (thousands of games)        |
-|   3. Export Optimal Weight Vector -> Update Java Heuristic constants                  |
+|   1. Compile Headless Simulator (FastState vs FastState, zero GUI/network overhead)   |
+|   2. Run SPSA / Genetic Tuning across parallel CPU worker threads                     |
+|   3. Anytime Atomic Checkpointing (checkpoint_weights.json) -> Update Heuristics      |
 +---------------------------------------------------------------------------------------+
 ```
 
@@ -206,7 +207,7 @@ Development follows progressive, pedagogical phases: from basic data structures 
 - [x] **Phase 2: Search Engine & Socket Client Integration** (Completed, Negamax $\alpha$-$\beta$, IDS, Two-Tier Time Management, 100% Win vs RandomPlayer).
 - [x] **Phase 3: Opening Book & Advanced Search Techniques** (Completed, Transposition Table, Move Ordering, Quiescence Search, D4 Opening Book, 40.5x Node Pruning Reduction).
 - [x] **Phase 4: Parameterized Domain Heuristics** (Completed, King Escape Forks, Rhombus Blockade, Keep Fronts, 30.9M evals/sec, 15 Tunable Parameters).
-- [ ] **Phase 5: Multi-Core Scaling (4 vCPUs Lazy SMP) & Remote Tuning Pipeline** (SPSA, Self-play tournaments, VirtualBox test).
+- [ ] **Phase 5: Multi-Core Scaling (4 vCPUs Lazy SMP) & High-Throughput Tuning Pipeline** (SPSA, 16-thread self-play, VirtualBox test).
 
 ---
 
@@ -326,21 +327,43 @@ To avoid wasting valuable compute hours training openings from zero, the book wi
 
 ---
 
-### Phase 5: Multi-Core Scaling (4 vCPUs Lazy SMP) & Remote Tuning Pipeline
+### Phase 5: Multi-Core Scaling (4 vCPUs Lazy SMP) & High-Throughput Tuning Pipeline
 * **Educational Objective:** Learn automated machine learning tuning for heuristic weights, shared-memory lock-free parallel search (Lazy SMP), and cross-environment deployment.
-* **Concurrency Strategy & Roadmap Timing:**
-  * **Phase 4 (Current): Strict Single-Thread Execution (1 Core).**
-    * *Rationale:* Developing, calibrating, and debugging domain heuristics requires 100% deterministic, reproducible evaluation values at every search node. Multi-threading during heuristic design introduces non-deterministic race conditions in transposition probes and move ordering, obscuring root-cause debugging.
-  * **Phase 5 (Next): Parallel Scaling to 4 Cores (Lazy SMP).**
-    * *Rationale:* The competition VM allocates 4 vCPUs. Once heuristics are finalized and stable, scaling to all 4 cores provides a $\approx 3.2\text{--}3.5\times$ computational speedup, reaching deeper plies within the same timeout budget.
-    * *Implementation (Lazy SMP):* Worker threads search the same game tree concurrently, sharing the parallel primitive Transposition Table (`TranspositionTable.java`) with lock-free reads/writes and diversified move ordering at shallow depths.
-    * *Strict Tournament Rule Compliance:* All worker threads join or halt upon move decision; during the opponent's turn, CPU usage strictly returns to 0% with synchronous blocking on socket `read()` (*No Pondering*).
-* **Deliverables:**
-  * `ParallelSearchEngine.java`: 4-thread Lazy SMP search coordinator with shared Transposition Table.
-  * Headless tournament runner executing thousands of fast matches without GUI/networking overhead.
-  * Remote tuning script (SPSA or Genetic Algorithm inspired by `THoR`'s `genetic_search.py`) running on the Madrid server via SSH to discover optimal weights $w_i$.
-  * Syncing final weights into Java constants.
-  * Final validation inside the official VirtualBox Debian VM via `runmyplayer.sh` with network disconnected.
+
+#### 5.1 Local Training Environment & Architecture
+* **Execution Environment:** Local multi-core machine running without external SSH or network overhead.
+  - Multi-threaded CPU self-play: pure in-memory execution matching the competition VM execution characteristics (pure CPU).
+  - High-throughput headless simulation executing parallel worker threads within a single JVM process.
+  - Dedicated overnight training with anytime atomic checkpointing, utilizing available CPU threads to maximize simulation games/sec.
+  - Zero network latency, zero SSH friction, direct shared memory IPC within the JVM.
+
+#### 5.2 Anytime Continuous Optimization Strategy ("Train Until Budget Depleted")
+* **No Fixed Epoch Limit:** Rather than stopping after a rigid number of hours or games, the tuner operates in an **anytime continuous optimizer mode**. It trains indefinitely with uninterrupted progress until stopped by the user in the morning or when time runs out.
+* **Algorithm:** SPSA (*Simultaneous Perturbation Stochastic Approximation*):
+  1. Maintains active parameter vector $\mathbf{w} \in \mathbb{R}^{15}$.
+  2. Perturbs all 15 parameters simultaneously by $\pm \Delta_k$ to create candidate vectors $\mathbf{w}_k^+$ and $\mathbf{w}_k^-$.
+  3. Spawns headless parallel matches between $\mathbf{w}_k^+$ and $\mathbf{w}_k^-$ at calibrated tactical depth (Depth 3–4 with Quiescence Search).
+  4. Approximates the multi-dimensional win-rate gradient $\hat{g}_k$ and updates $\mathbf{w}_{k+1} = \mathbf{w}_k + a_k \hat{g}_k$.
+* **Atomic Checkpointing & Fault Tolerance:**
+  - Every $N$ iterations (e.g., every 5 minutes), the tuner atomically flushes the current best weight vector $\mathbf{w}^*$, win rate, iteration index, and estimated Elo gain to a persistent JSON file: `checkpoint_weights.json`.
+  - If the training session is terminated at any point (Ctrl+C, closed lid, power off), **zero progress is lost**; the latest validated checkpoint is immediately usable.
+
+#### 5.3 Local Execution & Process Management
+* **Overnight Autonomous Execution:**
+  - Can be run in foreground with live console dashboard or in background logging to `training.log`:
+    ```powershell
+    python scripts/train_spsa.py --threads 8 --depth 3
+    ```
+  - Displays real-time telemetry: iterations, games played, NPS, win rate delta, and current parameter vector.
+* **Instant Weight Application:**
+  - A helper utility (`scripts/apply_weights.py` or Java injector) reads `checkpoint_weights.json` and updates the default constant values in `HeuristicWeights.java` with a single command.
+
+#### 5.4 Phase 5 Deliverables
+1. `ParallelSearchEngine.java`: 4-thread Lazy SMP search coordinator with shared Transposition Table for competition VM.
+2. `HeadlessTournament.java`: High-throughput simulator running headless matches without GUI, networking, or sleep calls, utilizing all 16 CPU threads.
+3. `scripts/train_spsa.py`: Anytime continuous SPSA optimizer with atomic checkpointing and parallel worker pool.
+4. `scripts/apply_weights.py`: Instant weight injector updating `HeuristicWeights.java`.
+5. Final validation in official Debian VM via `runmyplayer.sh` with network disconnected.
 
 ---
 
