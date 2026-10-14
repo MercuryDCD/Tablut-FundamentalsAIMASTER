@@ -1,14 +1,58 @@
-# Tablut AI Agent — Architecture & Technical Reference Manual
+# Tablut AI Agent — Technical Architecture & Reference Manual
 
-Autonomous Artificial Intelligence agent developed for the **Tablut Challenge (A.A. 2026/2027)** in the *Fundamentals of Artificial Intelligence and Knowledge Representation* course at the **University of Bologna (UNIBO)**.
+Autonomous Artificial Intelligence engine developed for the **Tablut Challenge (A.A. 2026/2027)** in the *Fundamentals of Artificial Intelligence and Knowledge Representation* course at the **University of Bologna (UNIBO)**.
 
-This document serves as the **central reference manual** for the entire codebase. It details every source file, architectural design decision, algorithmic foundation, heuristic formula, and execution instruction.
+This repository implements a tournament-grade, zero-allocation game engine in Java, combining classical adversarial search techniques with domain-specific heuristics and symmetry-compressed opening theory.
+
+```
++---------------------------------------------------------------------------------------------------+
+|                                           TABLUT ENGINE                                           |
+|                                                                                                   |
+|  [Turns 1-5: Opening Theory]                                                                      |
+|  +----------------------------------------------------------------------+                         |
+|  |                 Opening Book (D4 Dihedral Group, 8x)                 | ---> Instant (< 0.01 ms)|
+|  +-----------------------------------+----------------------------------+                         |
+|                                      |                                                            |
+|  [Mid/Late Game: Adversarial Search] v                                                            |
+|  +---------------------------------------------------------------------------------------------+  |
+|  | Iterative Deepening Search (IDS) + Two-Tier Dynamic Time Management (Soft / Hard Deadlines) |  |
+|  |                                                                                             |  |
+|  |   +-------------------------------------------------------------------------------------+   |  |
+|  |   | Negamax Alpha-Beta Pruning                                                          |   |  |
+|  |   | - Transposition Table: Primitive parallel arrays, Zobrist 64-bit hashing            |   |  |
+|  |   | - Move Ordering: 5 priority tiers (PV > Win > Custodian > Killers > History)        |   |  |
+|  |   | - Quiescence Search: Tactical capture resolution, Horizon Effect mitigation         |   |  |
+|  |   +-------------------------------------------+-----------------------------------------+   |  |
+|  +-----------------------------------------------|---------------------------------------------+  |
+|                                                  v                                                |
+|  [Leaf Node Evaluation]                                                                           |
+|  +---------------------------------------------------------------------------------------------+  |
+|  | Parameterized Domain Heuristic Engine (30.9M evals/sec, zero heap allocation)               |  |
+|  | Score(S) = WhiteHeuristics(S, w) - BlackHeuristics(S, w)                                    |  |
+|  +---------------------------------------------------------------------------------------------+  |
++---------------------------------------------------------------------------------------------------+
+```
 
 ---
 
-## 1. Game Overview & Domain Specifications (Ashton Tablut)
+## 1. System Specifications & Key Metrics
 
-Tablut is an ancient Norse/Viking board game of the **Tafl** family played on a $9 \times 9$ grid ($81$ squares, indexed from `a1` to `i9`):
+| Metric / Dimension | Specification | Measured Performance |
+| :--- | :--- | :--- |
+| **Language & Platform** | Java 17 / Java 8 bytecode compatible | Fully portable, single JVM process |
+| **State Traversal Speed** | Zero-allocation `makeMove` / `unmakeMove` | **85,048,952 NPS** (Perft Depth 4) |
+| **Search Tree Pruning** | Transposition Table + 5-tier Move Ordering | **40.5x node count reduction** |
+| **Transposition Throughput**| Primitive parallel arrays (no GC) | **20,833,333 ops/sec** |
+| **Opening Retrieval** | $D_4$ Dihedral Symmetry Group (8-fold compression) | **< 0.001 ms** (instant) |
+| **Evaluation Speed** | Cache-aligned integer arithmetic | **30,940,593 evaluations/sec** |
+| **Rule Compliance** | Official UNIBO `GameAshtonTablut` | **100% compliant** (all branches verified) |
+| **Adversary Turn Rule** | Strict blocking read on TCP socket | **0% CPU usage** during opponent turn |
+
+---
+
+## 2. Game Overview & Ashton Tablut Rules
+
+Ashton Tablut is an ancient Norse/Viking board game played on a $9 \times 9$ grid ($81$ squares, indexed `a1` to `i9`):
 
 ```
     a   b   c   d   e   f   g   h   i
@@ -24,267 +68,235 @@ Tablut is an ancient Norse/Viking board game of the **Tafl** family played on a 
     a   b   c   d   e   f   g   h   i
 ```
 
-### 1.1 Asymmetric Factions & Victory Conditions
+### 2.1 Asymmetric Factions & Victory Conditions
 * **White (Defenders):**
   * **Composition:** 1 King ($K$) stationed at the central Castle/Throne (`e5`) and 8 Defender soldiers ($W$) forming an orthogonal cross around the throne (`e3`, `e4`, `e6`, `e7`, `c5`, `d5`, `f5`, `g5`).
-  * **Objective:** Guide the King to any of the 16 peripheral **Escape Squares** on the outer border (rows 1 and 9, columns A and I, excluding corners and camp entrance squares).
+  * **Objective:** Escort the King to any of the 16 perimeter **Escape Squares** (outer border, excluding corners and camp entrance squares).
 * **Black (Attackers):**
-  * **Composition:** 16 Attacker soldiers ($B$) stationed in 4 edge encampments (Citadels/Camps, 4 soldiers per camp).
-  * **Objective:** Trap and capture the White King according to Ashton Tablut capture conditions.
-* **Termination Outcomes:**
+  * **Composition:** 16 Attacker soldiers ($B$) stationed across 4 edge encampments (Citadels/Camps, 4 soldiers per camp).
+  * **Objective:** Capture the White King according to Ashton Tablut encirclement rules.
+* **Termination Rules:**
   * **White Win:** King reaches an escape square.
   * **Black Win:** King is captured.
-  * **Stalemate:** A player with no legal moves on their turn immediately loses.
-  * **Draw:** When the exact same board configuration occurs twice in the game (strict 2-fold repetition rule).
+  * **Stalemate:** A player with no legal moves loses immediately.
+  * **Draw:** When the exact same board configuration occurs twice (strict 2-fold repetition rule).
 
-### 1.2 Special Squares & Ashton Rules
+### 2.2 Special Squares & Ashton Mechanics
 1. **The Castle / Throne (`e5`):**
-   * Only the King may occupy `e5`. Once the King leaves the throne, no piece may re-enter it.
+   * Only the King may occupy `e5`. Once vacated, no piece may re-enter.
    * Acts as an impassable obstacle for movement for all pieces.
-   * Acts as a hostile barrier (anvil) for custodian captures against adjacent pieces for both players.
+   * Acts as a hostile barrier (anvil) for custodian captures against adjacent pieces of either side.
 2. **The Encampments / Camps (Citadels):**
    * 16 squares across 4 edge areas (`North`, `South`, `East`, `West`).
-   * White pieces may **never** enter or traverse camps under any circumstances.
-   * Black pieces can move freely within their starting camp until they exit. **Once a black soldier leaves its starting camp, it can never re-enter any camp.**
+   * White pieces may **never** enter or traverse camp squares.
+   * Black pieces can move freely within their starting camp. **Once a black soldier leaves its starting camp, it can never re-enter any camp.**
    * Camps act as hostile barriers for captures against adjacent soldiers, even when empty.
 3. **Custodian Capture Mechanics (Active):**
-   * A piece is captured when sandwiched on two opposite orthogonal sides by enemy pieces (or an enemy piece and a hostile anvil square like the Castle or Camp).
-   * Captures are strictly **active**: moving voluntarily between two enemy pieces does not result in suicide or capture.
+   * A piece is captured when flanked on two opposite orthogonal sides by enemy pieces or an enemy piece and an anvil square (Throne or Camp).
+   * Captures are strictly active: moving voluntarily between two enemy pieces does not trigger capture.
 4. **Ashton King Capture Rules:**
-   * **Inside the Castle (`e5`):** Must be completely surrounded on **all 4 orthogonal sides** by Black soldiers.
-   * **Adjacent to the Castle (`e4`, `e6`, `d5`, `f5`):** Must be surrounded on **all 3 free orthogonal sides** by Black soldiers (the Castle serves as the 4th side).
-   * **Anywhere else on the board:** Standard custodian capture between **2 opposing Black pieces** (or 1 Black piece and an anvil square).
+   * **On the Throne (`e5`):** Must be surrounded on **all 4 orthogonal sides** by Black soldiers.
+   * **Adjacent to the Throne (`e4`, `e6`, `d5`, `f5`):** Must be surrounded on **all 3 free orthogonal sides** by Black soldiers (the Throne acts as the 4th side).
+   * **In the Open Field:** Standard custodian capture between **2 opposing Black pieces** (or 1 Black piece and an anvil square).
 
 ---
 
-## 2. Core Architectural Design Decisions
+## 3. Core Architectural Principles
 
-The engine is engineered specifically for competitive execution under official UNIBO tournament constraints (4 vCPUs, 8 GB RAM, no GPU, zero internet, 60-second move limit, strict zero CPU usage during opponent turn).
+The engine is engineered for execution under official tournament constraints: 4 vCPUs, 8 GB RAM, no GPU, zero internet access, dynamic time limits, and strict inactivity on the opponent's turn.
 
-### 2.1 Zero-Heap Allocation in the Search Loop
-* **The Problem:** In a typical minimax tree search generating 10–50 million nodes per turn, creating Java objects (`new Move()`, `new Board()`, `new ArrayList()`) triggers catastrophic garbage collector (GC) pauses. GC stop-the-world pauses in Java can exceed 500–2,000 ms, causing immediate forfeit on timeout.
-* **Our Solution:** Preallocate all search buffers upfront:
-  * Move lists are stored in a contiguous 2D primitive array `int[MAX_DEPTH][256]`.
-  * Undo states are stored in a preallocated stack `UndoInfo[MAX_DEPTH]`.
-  * Board updates mutate state in place (`makeMove`) and restore it in $\mathcal{O}(1)$ via `unmakeMove` without copying or heap allocations.
+### 3.1 Zero-Heap Allocation Search Loop
+In a minimax tree evaluating 10–50 million nodes per move, instantiating short-lived Java objects triggers frequent Garbage Collector (GC) pauses. Stop-the-world pauses in Java can exceed 500–2000 ms, risking timeout forfeits.
+* Move lists are stored in a contiguous 2D primitive buffer: `int[MAX_DEPTH][256]`.
+* Undo records are managed in a preallocated stack: `UndoInfo[MAX_DEPTH]`.
+* Board updates mutate state in place (`makeMove`) and backtrack via `unmakeMove` in $\mathcal{O}(1)$ time without copying.
 
-### 2.2 Cache-Locality & Flat Board Alignment
-* **The Problem:** Multi-dimensional arrays (`byte[9][9]`) or object matrices create pointer indirections and cache misses in the CPU.
-* **Our Solution:** The board is stored as a flat `byte[81]` array. The entire board occupies 81 contiguous bytes—far smaller than a single 64-byte L1 CPU cache line pair. State evaluations, move generation, and ray-casting execute with maximum CPU cache hit rates.
+### 3.2 Cache-Aligned Flat Board Representation
+Multi-dimensional matrices (`byte[9][9]`) introduce pointer indirection and cache misses. The board is represented as a contiguous `byte[81]` array. The entire board state fits within 81 bytes—smaller than two L1 CPU cache lines—ensuring maximum cache hit rates during move generation and ray-casting.
 
-### 2.3 Bitwise Primitive Move Packing
-* **The Problem:** Instantiating `Action` or `Move` objects for millions of candidate moves is slow.
-* **Our Solution:** A move is packed into a single 32-bit primitive integer (`int`):
-  $$\text{Move} = (\text{from} \ \& \ \text{0x7F}) \ | \ ((\text{to} \ \& \ \text{0x7F}) \ll 7)$$
-  Decoding `from` and `to` requires only single-cycle bit shifts and masks (`move & 0x7F` and `(move >> 7) & 0x7F`).
+### 3.3 Bitwise Primitive Move Packing
+Moves are packed into primitive 32-bit integers (`int`):
+$$\text{Move} = (\text{from} \ \& \ \text{0x7F}) \ | \ ((\text{to} \ \& \ \text{0x7F}) \ll 7)$$
+Decoding `from` and `to` requires single-cycle bit shifts and masks without object instantiation.
 
-### 2.4 Incremental Zobrist State Hashing $\mathcal{O}(1)$
-* **The Problem:** Detecting state repetition and looking up hash tables by comparing all 81 squares takes tens of CPU cycles per node.
-* **Our Solution:** Every square-piece combination has a precomputed 64-bit random key. When a piece moves or captures occur, the hash is updated incrementally in a single cycle using bitwise XOR ($\oplus$):
-  $$H_{\text{new}} = H_{\text{old}} \oplus K[\text{from}][\text{piece}] \oplus K[\text{to}][\text{piece}] \oplus K[\text{captured}][\text{pawn}] \oplus K_{\text{turn}}$$
+### 3.4 Incremental Zobrist Hashing $\mathcal{O}(1)$
+Every square-piece combination has a precomputed 64-bit random key. The state hash is updated incrementally in a single CPU cycle using bitwise XOR ($\oplus$):
+$$H_{\text{new}} = H_{\text{old}} \oplus K[\text{from}][\text{piece}] \oplus K[\text{to}][\text{piece}] \oplus K[\text{captured}][\text{pawn}] \oplus K_{\text{turn}}$$
 
-### 2.5 Two-Tier Dynamic Time Management
-* **The Problem:** If the search engine is configured with a static depth (e.g., depth 5), it might take 2 seconds in simple endgames but 120 seconds in complex middle games, resulting in disqualification. If it uses iterative deepening with naive timers, calling `System.currentTimeMillis()` at every node introduces expensive OS kernel syscall overhead.
-* **Our Solution:** A two-tier architecture:
-  1. **Tier 1 (Predictive Soft Cutoff):** Before starting depth $d+1$, the engine projects time consumption $T_{d+1} \approx T_d \times b_{\text{eff}}$ (with effective branching factor $b_{\text{eff}} \approx 5.0$). If `elapsed + projected > budget * safetyRatio`, the engine aborts before starting depth $d+1$.
-  2. **Tier 2 (Emergency Hard Cutoff):** During recursive search, the clock is sampled only once every 4,096 nodes using a zero-cost bitmask check:
-     $$\text{if } ((\text{nodesVisited} \ \& \ 4095) == 0) \implies \text{check } \text{System.currentTimeMillis}()$$
-     If the deadline is breached, `stopped = true` immediately unwinds the recursion stack.
-
-### 2.6 Strict Tournament Rule Compliance (Adversary Turn Inaction)
-* **The Rule:** UNIBO regulations strictly prohibit background pondering, speculative evaluation, or CPU execution while waiting for the opponent.
-* **Our Implementation:** `TablutAgentClient` blocks synchronously on `in.readInt()` in the Java network socket. During the opponent's turn, the agent process consumes **0% CPU**, fully compliant with tournament guidelines.
+### 3.5 Two-Tier Dynamic Time Management
+* **Tier 1 (Predictive Soft Cutoff):** Before starting depth $d+1$, the engine projects time consumption $T_{d+1} \approx T_d \times b_{\text{eff}}$ (with effective branching factor $b_{\text{eff}} \approx 5.0$). If `elapsed + projected > budget * safetyRatio`, the engine aborts before starting depth $d+1$.
+* **Tier 2 (Emergency Hard Cutoff):** The clock is checked only once every 4,096 nodes via a zero-cost bitmask check:
+  $$\text{if } ((\text{nodesVisited} \ \& \ 4095) == 0) \implies \text{check } \text{System.currentTimeMillis}()$$
+  If the deadline is reached, search unwinds immediately, preserving the best move from the last fully completed depth.
 
 ---
 
-## 3. Detailed File-by-File Technical Guide
+## 4. Subsystem Directory & Component Guide
 
 ```
 src/tablut/engine/
-├── BoardConstants.java       # Static lookup tables, coordinates, and Ashton board map
-├── Move.java                 # Bitwise primitive move encoding/decoding
-├── UndoInfo.java             # Reversible stack record for O(1) unmakeMove
-├── FastState.java            # High-speed flat board state, rules, captures, and win logic
-├── MoveGenerator.java        # Legal rook-slide move calculator enforcing camp/throne constraints
-├── ZobristHash.java          # 64-bit incremental XOR state fingerprinting
-├── StateAdapter.java         # Bi-directional bridge to official UNIBO StateTablut & Action
-├── BaselineEvaluation.java   # Static heuristic evaluator (asymmetric material, king corridors)
-├── SearchEngine.java         # Negamax alpha-beta search, IDS, and two-tier timekeeper
-├── TablutAgentClient.java    # Official CLI entry point & TCP socket client
-├── PerftTest.java            # Performance stress benchmark (85M NPS validation)
-├── RuleVerificationTest.java # Automated cross-verification against official GameAshtonTablut
-└── SearchEngineTest.java     # Tactical suite (mate-in-1, dynamic cutoff validation)
+├── Core Domain & State Representation
+│   ├── BoardConstants.java       # Board geometry, lookup tables, bitmasks, square names
+│   ├── Move.java                 # Bitwise primitive move encoding/decoding
+│   ├── UndoInfo.java             # Stack-allocated undo struct for O(1) unmakeMove
+│   ├── FastState.java            # Flat byte[81] board array, Ashton captures, win conditions
+│   ├── MoveGenerator.java        # Legal rook-slide move generation enforcing camps/throne
+│   ├── ZobristHash.java          # 64-bit incremental XOR state hashing
+│   └── StateAdapter.java         # Bi-directional bridge to official UNIBO StateTablut & Action
+│
+├── Search & Tactical Resolution
+│   ├── SearchEngine.java         # Negamax alpha-beta, Iterative Deepening, two-tier timer
+│   ├── TranspositionTable.java   # Primitive parallel arrays, mate ply normalization, aging
+│   ├── MoveOrderer.java          # 5-tier ordering: PV > Winning > Captures > Killers > History
+│   ├── QuiescenceSearch.java     # Leaf capture-sequence resolution, Horizon Effect mitigation
+│   └── OpeningBook.java          # D4 Dihedral Group symmetry compression (8-fold, 0 ms lookup)
+│
+├── Parameterized Domain Heuristics
+│   ├── HeuristicWeights.java     # 15 tunable weights for White/Black asymmetric dynamics
+│   ├── WhiteHeuristics.java      # 2-way escape forks, diamond centers, king safety/mobility
+│   ├── BlackHeuristics.java      # 8-point rhombus blockade, camp doorway discipline, encirclement
+│   ├── HeuristicEvaluation.java  # Linear evaluation engine (30.9M evals/sec, zero GC)
+│   └── BaselineEvaluation.java   # Coarse baseline evaluation used in early phases
+│
+├── Client & Execution
+│   └── TablutAgentClient.java    # CLI entry point, case-insensitive role parsing, TCP socket loop
+│
+└── Test & Validation Suites
+    ├── PerftTest.java            # Performance stress test (85M NPS validation)
+    ├── RuleVerificationTest.java # Automated cross-verification against GameAshtonTablut
+    ├── SearchEngineTest.java     # Tactical suite (mate-in-1, dynamic cutoff, ablation)
+    ├── TranspositionTableTest.java # Probe/store, ply normalization, replacement policy
+    ├── MoveOrdererTest.java      # 5-tier priority verification
+    ├── QuiescenceSearchTest.java # Tactical resolution and trap avoidance verification
+    ├── OpeningBookTest.java      # D4 symmetry coverage and multi-ply continuation
+    └── HeuristicEvaluationTest.java # 10-stage unit and performance verification suite
 ```
 
 ---
 
-### 3.1 `BoardConstants.java` — *The Map & Rulebook Reference*
-* **Purpose:** Precomputes all static board properties into primitive lookup tables to eliminate runtime coordinate calculation.
-* **Key Components:**
-  * `coord(int r, int c)`: Inlines 2D grid coordinates $(r, c)$ into a 1D index $0 \dots 80$ via $r \times 9 + c$.
-  * `SQUARE_NAME[81]`: Maps index to UCI algebraic string (e.g., $40 \rightarrow \text{"e5"}$, $0 \rightarrow \text{"a1"}$).
-  * `IS_CAMP[81]`: Fast boolean array identifying the 16 citadel squares.
-  * `CAMP_ID[81]`: Identifies specific camps (`CAMP_NORTH`, `CAMP_SOUTH`, `CAMP_EAST`, `CAMP_WEST`) or $-1$ if outside. Allows $\mathcal{O}(1)$ verification of whether a black soldier is moving within its own camp.
-  * `IS_CAMP_ANVIL[81]`: Flags camp border squares that act as lethal anvils for custodian captures against defenders.
-  * `IS_WIN_SQUARE_FOR_KING[81]`: Flags the 16 perimeter escape squares.
+## 5. Domain Heuristics Architecture (Phase 4)
+
+Ashton Tablut is fundamentally asymmetric. The evaluation engine computes two independent feature sets, unified under Negamax:
+
+$$\text{Score}(S) = \text{Score}_{\text{White}}(S, \mathbf{w}) - \text{Score}_{\text{Black}}(S, \mathbf{w})$$
+
+```
++---------------------------------------------------------------------------------------------------+
+| WHITE POSITIONAL DYNAMICS (Escape & Corridor Clearance)                                           |
+| - Material Balance: Defender preservation ratio (~2:1 value relative to attackers)               |
+| - King Escape Corridors: Ray-casting detection of unobstructed orthogonal paths to border         |
+| - Unblockable 2-Way Forks: Simultaneous threats on 2 perpendicular escape lines                   |
+| - Diamond / Windmill Formations: Pawn occupancy on {d3, f4, d6, f7} and mirror {f3, d4, f6, d7}   |
+| - King Safety & Anti-Custodian Defense: Dynamic threat detection on/adjacent/off the Throne       |
++---------------------------------------------------------------------------------------------------+
+| BLACK POSITIONAL DYNAMICS (Encirclement & Perimeter Blockade)                                     |
+| - Material Superiority: Attrition priority to eliminate White defenders                          |
+| - 8-Point Rhombus Blockade: Occupation of vertices {c2, g2, b3, h3, b7, h7, c8, g8}              |
+| - Camp Front Discipline ("Keep the Fronts"): Preservation of gateway squares {e2, e8, b5, h5}     |
+| - King Encirclement: Hostile density adjacent to King matching Ashton capture geometry            |
+| - Center Confinement: Penalizing King advancement toward the outer perimeter                      |
++---------------------------------------------------------------------------------------------------+
+```
+
+### Parameterized Weight Vector (`HeuristicWeights.java`)
+All 15 weights are serializable to/from primitive integer arrays (`toArray()` / `fromArray(int[])`), designed for direct integration with automated optimization algorithms (SPSA / Genetic Algorithms):
+
+```java
+// White Parameters
+whitePiece = 140;                  // Defender preservation value
+blackCaptured = 80;                // Attacker eliminated value
+kingDistance = 30;                 // Distance to perimeter penalty
+kingSingleEscape = 1500;           // Single escape corridor threat
+kingDoubleEscape = 18000;          // Unstoppable 2-way escape fork
+diamondOccupancy = 70;             // Diamond formation center control
+kingMobility = 20;                 // Free orthogonal sliding squares
+kingVulnerabilityPenalty = 220;    // Active custodian threat penalty
+
+// Black Parameters
+blackPiece = 80;                   // Attacker preservation value
+whiteCaptured = 200;               // Defender eliminated value (attrition)
+rhombusBlockade = 100;             // 8-point perimeter blockade vertex
+campFrontPreserved = 60;           // Camp doorway preservation bonus
+kingSurroundedThrone = 280;        // Hostile pressure adjacent to King
+kingContainment = 35;              // Central confinement bonus
+blackMobility = 5;                 // Active mobility bonus
+```
 
 ---
 
-### 3.2 `Move.java` — *The Compact Move Ticket*
-* **Purpose:** Represents move actions as a primitive 32-bit integer (`int`).
-* **Key Methods:**
-  * `encode(int from, int to)`: Packs two 7-bit square indices into a single primitive integer.
-  * `getFrom(int move)`: Returns `move & 0x7F`.
-  * `getTo(int move)`: Returns `(move >>> 7) & 0x7F`.
-  * `toUci(int move)`: Formats move as algebraic UCI string (e.g., `"e4e3"`).
+## 6. Verification & Benchmark Results
+
+### 6.1 State Generation & Perft Benchmark
+Stress test traversing all legal moves from initial board state:
+* **Depth 1:** 56 nodes (0.001 s)
+* **Depth 2:** 4,408 nodes (0.001 s)
+* **Depth 3:** 248,456 nodes (0.006 s)
+* **Depth 4:** 19,159,224 nodes in 0.223 s (**85,915,802 NPS** on a single core)
+
+### 6.2 Search Engine Pruning Efficiency
+* **Unoptimized Minimax Tree (Depth 4):** 745,472 visited nodes.
+* **Optimized Tree (TT + Move Ordering + Quiescence):** 18,403 visited nodes.
+* **Pruning Factor:** **40.5x reduction** in evaluated states at identical depth.
+
+### 6.3 Domain Heuristics Throughput
+Benchmarked across 10,000,000 evaluations using full positional feature extraction:
+* **Time:** 0.323 s
+* **Throughput:** **30,940,593 evaluations/second**
+* **Memory Overhead:** 0 bytes allocated on heap (zero GC activity)
 
 ---
 
-### 3.3 `UndoInfo.java` — *The Time-Machine Receipt*
-* **Purpose:** Records state mutations executed by `makeMove` so that `unmakeMove` can restore the exact prior board in $\mathcal{O}(1)$ time without copying.
-* **Fields:**
-  * `capturedCount`: Number of enemy pieces eliminated by the move ($0 \dots 3$).
-  * `capturedSquares[3]`: Exact board indices of captured pawns.
-  * `capturedPieces[3]`: Original piece types captured (`WHITE` or `BLACK`).
-  * `oldKingSquare`, `oldTurn`, `oldZobristHash`: Prior state metadata.
+## 7. How to Compile & Run
 
----
+### Prerequisites
+* Java Development Kit (JDK 17 or JDK 8) installed and in `PATH`.
+* PowerShell (Windows) or Bash (Linux / Debian VM).
 
-### 3.4 `FastState.java` — *The High-Speed Digital Board*
-* **Purpose:** Encapsulates the complete game state and enforces all move application, capture detection, and victory evaluation rules.
-* **Key Methods:**
-  * `makeMove(int move, UndoInfo undo)`: Moves piece, updates King location, applies incremental Zobrist hash updates, tests for King escape, calls active capture detection, toggles turn, and fills `UndoInfo`.
-  * `unmakeMove(int move, UndoInfo undo)`: Reverses piece slide, restores captured pawns to their exact squares, and resets turn, King position, and Zobrist hash.
-  * `checkCapturesByWhite(int to, UndoInfo undo)`: Tests custodian captures in all 4 orthogonal directions using friendly pieces, the Throne, or camp anvils.
-  * `checkCapturesByBlack(int to, UndoInfo undo)`: Tests defender captures in all 4 orthogonal directions and evaluates King capture under Ashton rules (4-side surrounding on throne, 3-side surrounding adjacent to throne, 2-side surrounding in open field).
-
----
-
-### 3.5 `MoveGenerator.java` — *The Rule Referee*
-* **Purpose:** Generates all pseudo-legal and legal moves for the active player without heap allocations.
-* **Mechanics:**
-  * Takes a preallocated `int[] moveList` and an `offset`.
-  * **White Move Generation:** For each white pawn and King, radiates rays in 4 orthogonal directions. Ray stops upon hitting the board boundary, another piece, the Throne, or any Camp square.
-  * **Black Move Generation:** For each black pawn, radiates rays in 4 directions. If starting inside a camp (`fromCampId != -1`), movement within the same camp or out to the normal board is permitted. If starting outside camps, rays terminate upon hitting any camp square.
-
----
-
-### 3.6 `ZobristHash.java` — *The Unique State Fingerprint*
-* **Purpose:** Generates 64-bit state fingerprints for $\mathcal{O}(1)$ state equality checking, repetition detection, and transposition tables.
-* **Implementation:**
-  * Precomputes pseudo-random 64-bit keys for `PIECE_KEYS[81][4]` and `BLACK_TURN_KEY`.
-  * Supports full initial hash computation (`computeInitialHash`) and incremental updates via XOR ($\oplus$).
-
----
-
-### 3.7 `StateAdapter.java` — *The Official Tournament Translator*
-* **Purpose:** Converts between official UNIBO domain objects (`StateTablut`, `Action`, `State.Turn`) and our internal high-speed types (`FastState`, `Move`).
-* **Key Methods:**
-  * `loadFromState(FastState fastState, State officialState)`: Populates our internal flat board from the official 2D object matrix and initializes piece counts and Zobrist hash.
-  * `toAction(int move, byte turn)`: Converts internal packed integer move to official `Action` object (`"e4" -> "e3"`).
-
----
-
-### 3.8 `BaselineEvaluation.java` — *The Board Judge*
-* **Purpose:** Computes static leaf node scores from the perspective of the player whose turn it is.
-* **Heuristic Formulation:**
-  $$\text{Score}_{\text{White}} = \Delta_{\text{Material}} + \text{Bonus}_{\text{Escape}} - \text{Penalty}_{\text{Dist}} - \text{Penalty}_{\text{Encircle}}$$
-  * $\Delta_{\text{Material}} = (W_{\text{count}} \times 120) - (B_{\text{count}} \times 70)$: Reflects the $2:1$ initial piece asymmetry.
-  * $\text{Bonus}_{\text{Escape}} = +5,000 \times N_{\text{open\_corridors}}$: Massive tactical bonus if the King has a clear, unobstructed path to an escape square.
-  * $\text{Penalty}_{\text{Dist}} = \text{dist}_{\text{edge}} \times 15$: Penalizes King central entrapment.
-  * $\text{Penalty}_{\text{Encircle}} = N_{\text{adjacent\_black}} \times 80$: Penalizes enemy soldiers flanking the King.
-  * **Negamax Conversion:** Returns $\text{Score}_{\text{White}}$ if White's turn, $-\text{Score}_{\text{White}}$ if Black's turn.
-  * **Terminal Win/Loss:** Scored as $\pm 100,000$.
-
----
-
-### 3.9 `SearchEngine.java` — *The Grandmaster Brain*
-* **Purpose:** Orchestrates adversarial game tree exploration, iterative deepening, move ordering, and timeout management.
-* **Key Algorithmic Concepts:**
-  * **Negamax with $\alpha$-$\beta$ Pruning:** Exploits zero-sum symmetry: $\text{score} = -\text{negamax}(-\beta, -\alpha)$. Eliminates duplicate MAX/MIN logic.
-  * **Distance-Penalized Terminal Scoring (`WIN_SCORE - ply`):** A win in 1 move scores $99,999$; a win in 5 moves scores $99,995$. Guarantees the engine selects the shortest path to victory and delays defeat when losing.
-  * **Iterative Deepening Search (IDS):** Sequentially explores depths $1, 2, 3, \dots$. If interrupted, cleanly discards the partial depth and falls back to the fully verified move from depth $d-1$.
-  * **Root Move Ordering (PV Move):** Promotes the best move from the prior iteration to index 0, seeding $\alpha$ with a high bound and pruning up to 90% of alternative branches.
-  * **Two-Tier Dynamic Time Management:**
-    * *Soft Cutoff:* $T_{d+1} \approx T_d \times 5.0$. Prevents launching an iteration that cannot finish.
-    * *Emergency Hard Cutoff:* `(nodesVisited & 4095) == 0`. Aborts recursion safely within milliseconds of the deadline.
-
----
-
-### 3.10 `TablutAgentClient.java` — *The Tournament Athlete*
-* **Purpose:** Official CLI entry point conforming to UNIBO competition specifications.
-* **Responsibilities:**
-  * Extends `TablutClient` to inherit standard network socket abstractions.
-  * Parses arguments: `<ROLE> <TIMEOUT_SECONDS> <SERVER_IP>`. Handles role case-insensitively (`white`, `WHITE`, `White`).
-  * Sends player name handshake (`"Antigravity"`).
-  * Executes the match loop:
-    * Blocking TCP read: consumes **0% CPU** while the opponent is thinking.
-    * Turn detection: when our turn, invokes `SearchEngine.search`, formats action JSON, and writes to server.
-    * Match termination: detects `WHITEWIN`, `BLACKWIN`, and `DRAW`, printing clean summaries and exiting.
-
----
-
-### 3.11 Test & Validation Suites
-* **`PerftTest.java`:** Performance stress test traversing all possible game branches without heuristics. Validates move generator correctness, reversibility, and hash consistency:
-  * Depth 1: 56 nodes (0.002 s)
-  * Depth 2: 4,408 nodes (0.001 s)
-  * Depth 3: 248,456 nodes (0.014 s)
-  * Depth 4: 19,159,224 nodes in 0.225 s (**85,048,952 NPS** on a single CPU core).
-* **`RuleVerificationTest.java`:** Automated cross-validation verifying our `FastState` and `MoveGenerator` against the official UNIBO `GameAshtonTablut.checkMove` across root and child branches, confirming 100% compliance.
-* **`SearchEngineTest.java`:** Tactical suite verifying:
-  * Instant White win recognition (King escape mate-in-1: `c3 -> a3`, score $99,999$).
-  * Instant Black win recognition (King custodian capture mate-in-1: `d1 -> d3`, score $99,999$).
-  * Initial position search benchmark (depth 4 reached in 174 ms).
-  * Strict dynamic time cutoff enforcement under tight deadlines.
-
----
-
-## 4. How to Compile & Run (Step-by-Step)
-
-Requirements: Java Development Kit (JDK 17 or JDK 8) installed and available in `PATH`.
-
-### 4.1 Compile the Engine
+### 7.1 Compilation
 ```powershell
-# Windows (PowerShell)
-javac -cp "TablutCompetition-master\Tablut\Executables\Server.jar;bin" -d bin src\tablut\engine\*.java
+# Windows PowerShell
+javac -cp "TablutCompetition-master\Tablut\Executables\Server.jar;TablutCompetition-master\Tablut\lib\*" -d bin src\tablut\engine\*.java
 ```
 ```bash
 # Linux / macOS
-javac -cp "TablutCompetition-master/Tablut/Executables/Server.jar:bin" -d bin src/tablut/engine/*.java
+javac -cp "TablutCompetition-master/Tablut/Executables/Server.jar:TablutCompetition-master/Tablut/lib/*" -d bin src/tablut/engine/*.java
 ```
 
-### 4.2 Run Speed Benchmark (Perft)
+### 7.2 Run Test Suites
 ```powershell
+# Phase 1: Perft benchmark
 java -cp bin tablut.engine.PerftTest
-```
 
-### 4.3 Run Official Rule Compliance Test
-```powershell
+# Phase 1: Official Ashton rules cross-validation
 java -cp "bin;TablutCompetition-master\Tablut\Executables\Server.jar" tablut.engine.RuleVerificationTest
+
+# Phase 3: Transposition table & Move orderer tests
+java -cp "bin;TablutCompetition-master\Tablut\Executables\Server.jar" tablut.engine.TranspositionTableTest
+java -cp "bin;TablutCompetition-master\Tablut\Executables\Server.jar" tablut.engine.MoveOrdererTest
+java -cp "bin;TablutCompetition-master\Tablut\Executables\Server.jar" tablut.engine.QuiescenceSearchTest
+java -cp "bin;TablutCompetition-master\Tablut\Executables\Server.jar" tablut.engine.OpeningBookTest
+
+# Phase 4: Parameterized domain heuristics test suite
+java -cp "bin;TablutCompetition-master\Tablut\Executables\Server.jar" tablut.engine.HeuristicEvaluationTest
 ```
 
-### 4.4 Run Search Engine Tactical Suite
+### 7.3 Launch Player against Referee Server
 ```powershell
-java -cp "bin;TablutCompetition-master\Tablut\Executables\Server.jar" tablut.engine.SearchEngineTest
-```
-
-### 4.5 Execute Live Agent against Referee Server
-```powershell
-# In Windows PowerShell:
+# Windows PowerShell
 .\runmyplayer.ps1 -Role WHITE -Timeout 60 -ServerIp localhost
 ```
 ```bash
-# In Linux / Debian VM (Tournament Environment):
+# Linux / Tournament VM
 chmod +x runmyplayer.sh
 ./runmyplayer.sh WHITE 60 localhost
 ```
 
 ---
 
-## 5. Development Roadmap & Milestones
+## 8. Development Roadmap
 
-- [x] **Phase 1: Core Domain & High-Speed State Representation** (Completed, Commit `c31a286`, 85M NPS, 100% Rule Compliance).
-- [x] **Phase 2: Search Engine & Socket Client Integration** (Completed, Negamax $\alpha$-$\beta$, IDS, Two-Tier Time Management, 100% Win vs RandomPlayer).
-- [ ] **Phase 3: Opening Book & Advanced Search Techniques** (Transposition Table with Zobrist hashing, Move Ordering heuristics, Quiescence Search).
-- [ ] **Phase 4: Parameterized Domain Heuristics** (Quadrant control, King mobility, Camp blockade, Fortresses).
-- [ ] **Phase 5: Remote Tuning Pipeline & Competition VM Validation** (SPSA / Genetic Algorithm tuning via SSH, headless tournament runner, Debian VM tests).
+- [x] **Phase 1: Core Domain & High-Speed State Representation** (85M NPS, flat board, bitwise moves, O(1) undo, 100% rule compliance).
+- [x] **Phase 2: Search Engine & Socket Client Integration** (Negamax $\alpha$-$\beta$, IDS, two-tier time management, TCP socket client, 0% CPU on opponent turn).
+- [x] **Phase 3: Opening Book & Advanced Search Techniques** (D4 symmetry group opening book, parallel primitive TT, 5-tier move ordering, quiescence search, 40.5x node pruning).
+- [x] **Phase 4: Parameterized Domain Heuristics** (2-way escape forks, diamond center, 8-point rhombus blockade, "keep the fronts" discipline, 30.9M evals/sec).
+- [ ] **Phase 5: Multi-Core Scaling (4 vCPUs Lazy SMP) & Remote Tuning Pipeline** (Shared-memory lock-free TT, SPSA / Genetic Algorithm tuning via SSH, competition VM validation).
