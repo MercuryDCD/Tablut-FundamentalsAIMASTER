@@ -183,10 +183,14 @@ Launch the agent conforming to the official UNIBO tournament specification:
 ├── docs/
 │   ├── references/               # Academic papers and official competition slides
 │   └── wiki/                     # In-depth technical documentation
-│       ├── 01-Architecture-and-Search.md        # PVS, IDS, Lazy SMP, Zero-allocation
-│       ├── 02-Heuristics-and-SPSA-Tuning.md      # 17 heuristic features & SPSA math
-│       ├── 03-Opening-Book-D4.md                # D4 dihedral group symmetry & opening lines
-│       └── 04-VM-Constraints-and-Protocol.md    # TCP socket protocol & VM guardrails
+│       ├── Home.md                                      # Overview, Ashton rules & specifications
+│       ├── 01-State-Representation-and-Bit-Architecture.md # Flat byte[81], UndoInfo, Zobrist
+│       ├── 02-Search-and-Pruning-Algorithms.md          # Negamax, PVS, Quiescence, Move ordering
+│       ├── 03-Heuristics-and-Domain-Knowledge.md        # 17 domain weights, Rhombus, swarm field
+│       ├── 04-Opening-Book-and-Dihedral-Symmetry.md      # D4 group symmetry & canonical theory
+│       ├── 05-Concurrency-and-Lazy-SMP.md               # 4-vCPU Lazy SMP & Hyatt lockless XOR TT
+│       ├── 06-Offline-Tuning-Pipeline-SPSA.md           # Headless simulator & SPSA optimization
+│       └── 07-Protocol-CLI-and-Execution.md             # TCP framing, cutoffs & VM compliance
 ├── scripts/                      # Automated training, tournaments, and match runners
 ├── src/tablut/engine/            # Core Java engine source code
 ├── team/
@@ -197,4 +201,4 @@ Launch the agent conforming to the official UNIBO tournament specification:
 └── runmyplayer.sh / .ps1         # Official competition entry point scripts
 ```
 
-For complete technical specifications, see the **[Documentation Wiki](docs/wiki/01-Architecture-and-Search.md)**.
+For complete technical specifications, see the **[Documentation Wiki](docs/wiki/Home.md)**.
