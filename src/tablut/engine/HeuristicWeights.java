@@ -20,54 +20,60 @@ import java.util.Arrays;
  */
 public final class HeuristicWeights {
 
-    public static final int NUM_WEIGHTS = 15;
+    public static final int NUM_WEIGHTS = 17;
 
     // --- White Evaluation Weights ---
     // Weight index 0: Material value per alive White soldier
-    public int whitePiece = 140;
+    public int whitePiece = 125;
 
     // Weight index 1: Material value per captured Black attacker
-    public int blackCaptured = 80;
+    public int blackCaptured = 96;
 
     // Weight index 2: Distance penalty per step King is away from perimeter escapes
     public int kingDistance = 30;
 
     // Weight index 3: Bonus for 1 open orthogonal escape corridor to perimeter
-    public int kingSingleEscape = 1500;
+    public int kingSingleEscape = 1446;
 
     // Weight index 4: Massive bonus for 2+ independent open escape corridors (unblockable 2-way fork)
-    public int kingDoubleEscape = 18000;
+    public int kingDoubleEscape = 18413;
 
     // Weight index 5: Bonus per White soldier occupying diamond/windmill squares {d3, f4, d6, f7}
-    public int diamondOccupancy = 70;
+    public int diamondOccupancy = 65;
 
     // Weight index 6: Bonus per legal square King can reach in one move
-    public int kingMobility = 20;
+    public int kingMobility = 15;
 
     // Weight index 7: Penalty when King is vulnerable to immediate custodian capture
-    public int kingVulnerabilityPenalty = 220;
+    public int kingVulnerabilityPenalty = 219;
 
     // --- Black Evaluation Weights ---
     // Weight index 8: Material value per alive Black soldier
-    public int blackPiece = 80;
+    public int blackPiece = 105;
 
     // Weight index 9: Material value per captured White defender (attrition priority)
-    public int whiteCaptured = 200;
+    public int whiteCaptured = 194;
 
     // Weight index 10: Bonus per Black soldier on the 8 rhombus squares {c2, g2, b3, h3, b7, h7, c8, g8}
-    public int rhombusBlockade = 100;
+    public int rhombusBlockade = 88;
 
     // Weight index 11: Bonus per camp doorway preserved {e2, e8, b5, h5} ("Keep the Fronts")
-    public int campFrontPreserved = 60;
+    public int campFrontPreserved = 61;
 
     // Weight index 12: Bonus per hostile piece directly adjacent to King on/near Throne
-    public int kingSurroundedThrone = 280;
+    public int kingSurroundedThrone = 235;
 
     // Weight index 13: Bonus for keeping King contained close to the central Throne
-    public int kingContainment = 35;
+    public int kingContainment = 38;
 
     // Weight index 14: Mobility bonus for active Black soldiers
-    public int blackMobility = 5;
+    public int blackMobility = 7;
+
+    // Weight index 15: Bonus for connected blockade chains (orthogonal & diagonal soldier links)
+    public int blackConnectedChains = 12;
+
+    // Weight index 16: Bonus for swarming escaping King in open field (distFromCenter >= 2)
+    public int kingOpenFieldContainment = 18;
 
     public HeuristicWeights() {
         // Defaults initialized above
@@ -100,6 +106,8 @@ public final class HeuristicWeights {
         this.kingSurroundedThrone = other.kingSurroundedThrone;
         this.kingContainment = other.kingContainment;
         this.blackMobility = other.blackMobility;
+        this.blackConnectedChains = other.blackConnectedChains;
+        this.kingOpenFieldContainment = other.kingOpenFieldContainment;
     }
 
     /**
@@ -121,7 +129,9 @@ public final class HeuristicWeights {
             campFrontPreserved,
             kingSurroundedThrone,
             kingContainment,
-            blackMobility
+            blackMobility,
+            blackConnectedChains,
+            kingOpenFieldContainment
         };
     }
 
@@ -129,8 +139,8 @@ public final class HeuristicWeights {
      * Deserializes weights from a primitive int array.
      */
     public void fromArray(int[] arr) {
-        if (arr == null || arr.length < NUM_WEIGHTS) {
-            throw new IllegalArgumentException("Array length must be at least " + NUM_WEIGHTS);
+        if (arr == null || arr.length < 15) {
+            throw new IllegalArgumentException("Array length must be at least 15");
         }
         this.whitePiece = arr[0];
         this.blackCaptured = arr[1];
@@ -148,27 +158,35 @@ public final class HeuristicWeights {
         this.kingSurroundedThrone = arr[12];
         this.kingContainment = arr[13];
         this.blackMobility = arr[14];
+        if (arr.length >= 16) {
+            this.blackConnectedChains = arr[15];
+        }
+        if (arr.length >= 17) {
+            this.kingOpenFieldContainment = arr[16];
+        }
     }
 
     /**
      * Resets all parameters to default literature-calibrated values.
      */
     public void resetToDefaults() {
-        this.whitePiece = 140;
-        this.blackCaptured = 80;
+        this.whitePiece = 125;
+        this.blackCaptured = 96;
         this.kingDistance = 30;
-        this.kingSingleEscape = 1500;
-        this.kingDoubleEscape = 18000;
-        this.diamondOccupancy = 70;
-        this.kingMobility = 20;
-        this.kingVulnerabilityPenalty = 220;
+        this.kingSingleEscape = 1446;
+        this.kingDoubleEscape = 18413;
+        this.diamondOccupancy = 65;
+        this.kingMobility = 15;
+        this.kingVulnerabilityPenalty = 219;
 
-        this.blackPiece = 80;
-        this.whiteCaptured = 200;
-        this.rhombusBlockade = 100;
-        this.campFrontPreserved = 60;
-        this.kingSurroundedThrone = 280;
-        this.kingContainment = 35;
-        this.blackMobility = 5;
+        this.blackPiece = 105;
+        this.whiteCaptured = 194;
+        this.rhombusBlockade = 88;
+        this.campFrontPreserved = 61;
+        this.kingSurroundedThrone = 235;
+        this.kingContainment = 38;
+        this.blackMobility = 7;
+        this.blackConnectedChains = 12;
+        this.kingOpenFieldContainment = 18;
     }
 }

@@ -114,7 +114,12 @@ public final class QuiescenceSearch {
         }
 
         // 2. Delta Pruning: can any capture raise score above alpha?
-        if (standPat + DELTA_MARGIN < alpha) {
+        // In Ashton Tablut, King escapes and King captures are terminal moves worth +/-100,000.
+        // Delta pruning is strictly bypassed when tactical King threats or King escape options exist.
+        boolean kingTacticsPossible = (state.kingSquare != BoardConstants.THRONE && BoardConstants.MIN_DISTANCE_TO_ESCAPE[state.kingSquare] <= 2)
+                || isKingThreatened(state);
+
+        if (!kingTacticsPossible && standPat + DELTA_MARGIN < alpha) {
             return alpha;
         }
 
@@ -122,23 +127,50 @@ public final class QuiescenceSearch {
         int[] allMoves = qsMoveStack[qsPly];
         int numAllMoves = MoveGenerator.generateMoves(state, allMoves, 0);
 
-        UndoInfo undo = qsUndoStack[qsPly];
-
+        // Filter tactical moves in-place
+        int numTacticalMoves = 0;
         for (int i = 0; i < numAllMoves; i++) {
             int move = allMoves[i];
             int from = Move.getFrom(move);
             int to = Move.getTo(move);
             byte piece = state.board[from];
 
-            // King escape is a decisive tactical winning move
             boolean isKingEscape = (piece == BoardConstants.KING && BoardConstants.IS_WIN_SQUARE_FOR_KING[to]);
-            boolean isCapture = (MoveOrderer.evaluateCaptures(state, piece, to) > 0);
+            int capScore = MoveOrderer.evaluateCaptures(state, piece, to);
 
-            // In quiescence search, ignore quiet (non-capture, non-escape) moves
-            if (!isCapture && !isKingEscape) {
-                continue;
+            if (isKingEscape || capScore > 0) {
+                allMoves[numTacticalMoves++] = move;
             }
+        }
 
+        // If no tactical moves exist, position is quiescent
+        if (numTacticalMoves == 0) {
+            return standPat;
+        }
+
+        // Prioritize: move King escapes and King capture moves to position 0
+        for (int i = 0; i < numTacticalMoves; i++) {
+            int move = allMoves[i];
+            int from = Move.getFrom(move);
+            int to = Move.getTo(move);
+            byte piece = state.board[from];
+            boolean isKingEscape = (piece == BoardConstants.KING && BoardConstants.IS_WIN_SQUARE_FOR_KING[to]);
+            boolean isKingCap = (state.turn == BoardConstants.BLACK_TURN && (MoveOrderer.evaluateCaptures(state, piece, to) >= MoveOrderer.SCORE_CAPTURE_KING));
+
+            if (isKingEscape || isKingCap) {
+                if (i != 0) {
+                    int tmp = allMoves[0];
+                    allMoves[0] = allMoves[i];
+                    allMoves[i] = tmp;
+                }
+                break;
+            }
+        }
+
+        UndoInfo undo = qsUndoStack[qsPly];
+
+        for (int i = 0; i < numTacticalMoves; i++) {
+            int move = allMoves[i];
             state.makeMove(move, undo);
             int score = -search(state, -beta, -alpha, qsPly + 1, searchPly + 1);
             state.unmakeMove(move, undo);
@@ -152,5 +184,36 @@ public final class QuiescenceSearch {
         }
 
         return alpha;
+    }
+
+    private static boolean isKingThreatened(FastState state) {
+        int kSq = state.kingSquare;
+        if (kSq == BoardConstants.THRONE) {
+            int b = 0;
+            if (state.board[FastState.SQ_E4] == BoardConstants.BLACK) b++;
+            if (state.board[FastState.SQ_E6] == BoardConstants.BLACK) b++;
+            if (state.board[FastState.SQ_D5] == BoardConstants.BLACK) b++;
+            if (state.board[FastState.SQ_F5] == BoardConstants.BLACK) b++;
+            return b >= 3;
+        }
+        if (kSq == FastState.SQ_E4 || kSq == FastState.SQ_E6 || kSq == FastState.SQ_D5 || kSq == FastState.SQ_F5) {
+            int b = 0;
+            for (int dir : FastState.DIRS) {
+                int adj = kSq + dir;
+                if (adj >= 0 && adj < BoardConstants.NUM_SQUARES && adj != BoardConstants.THRONE && state.board[adj] == BoardConstants.BLACK) {
+                    b++;
+                }
+            }
+            return b >= 2;
+        }
+        for (int dir : FastState.DIRS) {
+            int adj = kSq + dir;
+            if (adj >= 0 && adj < BoardConstants.NUM_SQUARES) {
+                if (state.board[adj] == BoardConstants.BLACK || BoardConstants.IS_CAMP[adj] || adj == BoardConstants.THRONE) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 }

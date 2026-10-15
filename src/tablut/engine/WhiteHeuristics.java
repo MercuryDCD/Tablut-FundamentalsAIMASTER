@@ -55,10 +55,8 @@ public final class WhiteHeuristics {
         int kRow = BoardConstants.row(kSq);
         int kCol = BoardConstants.col(kSq);
 
-        // 2. King Distance to Nearest Perimeter Escape
-        int distRow = Math.min(kRow, 8 - kRow);
-        int distCol = Math.min(kCol, 8 - kCol);
-        int minDistanceToEdge = Math.min(distRow, distCol);
+        // 2. King Distance to Nearest Perimeter Escape (Strict 20-Exit Geometry)
+        int minDistanceToEdge = BoardConstants.MIN_DISTANCE_TO_ESCAPE[kSq];
         score -= minDistanceToEdge * weights.kingDistance;
 
         // 3. Escape Corridors & 2-Way Fork Detection
@@ -255,16 +253,18 @@ public final class WhiteHeuristics {
 
         if (kCol + 1 < 9) {
             int eSq = kSq + FastState.DIR_EAST;
-            if (state.board[eSq] == BoardConstants.BLACK || BoardConstants.IS_CAMP_ANVIL[eSq] || eSq == BoardConstants.THRONE) eastHostile = true;
+            if (state.board[eSq] == BoardConstants.BLACK || BoardConstants.IS_CAMP[eSq] || eSq == BoardConstants.THRONE) eastHostile = true;
             else if (state.board[eSq] == BoardConstants.EMPTY && !BoardConstants.IS_CAMP[eSq]) eastEmpty = true;
         }
         if (kCol - 1 >= 0) {
             int wSq = kSq + FastState.DIR_WEST;
-            if (state.board[wSq] == BoardConstants.BLACK || BoardConstants.IS_CAMP_ANVIL[wSq] || wSq == BoardConstants.THRONE) westHostile = true;
+            if (state.board[wSq] == BoardConstants.BLACK || BoardConstants.IS_CAMP[wSq] || wSq == BoardConstants.THRONE) westHostile = true;
             else if (state.board[wSq] == BoardConstants.EMPTY && !BoardConstants.IS_CAMP[wSq]) westEmpty = true;
         }
 
-        if ((eastHostile && westEmpty) || (westHostile && eastEmpty)) {
+        if (eastHostile && westHostile) {
+            threats += 4;
+        } else if ((eastHostile && westEmpty) || (westHostile && eastEmpty)) {
             threats++;
         }
 
@@ -276,16 +276,18 @@ public final class WhiteHeuristics {
 
         if (kRow + 1 < 9) {
             int nSq = kSq + FastState.DIR_NORTH;
-            if (state.board[nSq] == BoardConstants.BLACK || BoardConstants.IS_CAMP_ANVIL[nSq] || nSq == BoardConstants.THRONE) northHostile = true;
+            if (state.board[nSq] == BoardConstants.BLACK || BoardConstants.IS_CAMP[nSq] || nSq == BoardConstants.THRONE) northHostile = true;
             else if (state.board[nSq] == BoardConstants.EMPTY && !BoardConstants.IS_CAMP[nSq]) northEmpty = true;
         }
         if (kRow - 1 >= 0) {
             int sSq = kSq + FastState.DIR_SOUTH;
-            if (state.board[sSq] == BoardConstants.BLACK || BoardConstants.IS_CAMP_ANVIL[sSq] || sSq == BoardConstants.THRONE) southHostile = true;
+            if (state.board[sSq] == BoardConstants.BLACK || BoardConstants.IS_CAMP[sSq] || sSq == BoardConstants.THRONE) southHostile = true;
             else if (state.board[sSq] == BoardConstants.EMPTY && !BoardConstants.IS_CAMP[sSq]) southEmpty = true;
         }
 
-        if ((northHostile && southEmpty) || (southHostile && northEmpty)) {
+        if (northHostile && southHostile) {
+            threats += 4;
+        } else if ((northHostile && southEmpty) || (southHostile && northEmpty)) {
             threats++;
         }
 

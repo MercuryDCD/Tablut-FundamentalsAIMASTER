@@ -81,26 +81,49 @@ public final class HeadlessTournament {
         }
     }
 
+    private static final class EngineContext {
+        final SearchEngine whiteEngine = new SearchEngine();
+        final SearchEngine blackEngine = new SearchEngine();
+        final FastState state = new FastState();
+        final UndoInfo undo = new UndoInfo();
+        final int[] moves = new int[MoveGenerator.MAX_MOVES];
+    }
+
+    private static final ThreadLocal<EngineContext> THREAD_CONTEXT = ThreadLocal.withInitial(EngineContext::new);
+
     /**
      * Executes a single game between White and Black heuristic weight configurations.
      */
     public static MatchResult playSingleMatch(HeuristicWeights whiteWeights, HeuristicWeights blackWeights,
                                               boolean aIsWhite, int searchDepth, int openingRandomPlies,
                                               int maxPlies, long seed) {
-        FastState state = new FastState();
-        UndoInfo undo = new UndoInfo();
+        return playSingleMatch(whiteWeights, blackWeights, aIsWhite, searchDepth, 60000, openingRandomPlies, maxPlies, seed);
+    }
+
+    /**
+     * Executes a single game between White and Black heuristic weight configurations.
+     */
+    public static MatchResult playSingleMatch(HeuristicWeights whiteWeights, HeuristicWeights blackWeights,
+                                              boolean aIsWhite, int searchDepth, int timeoutMs,
+                                              int openingRandomPlies, int maxPlies, long seed) {
+        EngineContext ctx = THREAD_CONTEXT.get();
+        FastState state = ctx.state;
+        state.initInitialState();
+        UndoInfo undo = ctx.undo;
         Random rng = new Random(seed);
 
-        SearchEngine whiteEngine = new SearchEngine();
+        SearchEngine whiteEngine = ctx.whiteEngine;
         whiteEngine.setHeuristicWeights(whiteWeights);
         whiteEngine.setUseOpeningBook(true);
+        whiteEngine.getTranspositionTable().clear();
 
-        SearchEngine blackEngine = new SearchEngine();
+        SearchEngine blackEngine = ctx.blackEngine;
         blackEngine.setHeuristicWeights(blackWeights);
         blackEngine.setUseOpeningBook(true);
+        blackEngine.getTranspositionTable().clear();
 
         // Preallocated move stack and repetition history
-        int[] moves = new int[MoveGenerator.MAX_MOVES];
+        int[] moves = ctx.moves;
         long[] history = new long[maxPlies + 20];
         int historyCount = 0;
         history[historyCount++] = state.zobristHash;
@@ -121,9 +144,9 @@ public final class HeadlessTournament {
                 // Opening diversification: pick uniformly among legal moves
                 selectedMove = moves[rng.nextInt(numMoves)];
             } else {
-                // Tactical search at target depth
+                // Tactical search at target depth/time with game history repetition avoidance
                 SearchEngine currentEngine = (state.turn == BoardConstants.WHITE_TURN) ? whiteEngine : blackEngine;
-                SearchEngine.SearchResult result = currentEngine.search(state, 60000, searchDepth);
+                SearchEngine.SearchResult result = currentEngine.search(state, timeoutMs, searchDepth, history, historyCount);
                 selectedMove = result.bestMove;
 
                 if (selectedMove == Move.NULL_MOVE) {
@@ -166,6 +189,15 @@ public final class HeadlessTournament {
     public static TournamentResult runTournament(HeuristicWeights weightsA, HeuristicWeights weightsB,
                                                  int numGames, int numThreads, int searchDepth,
                                                  int openingRandomPlies, int maxPlies) {
+        return runTournament(weightsA, weightsB, numGames, numThreads, searchDepth, 60000, openingRandomPlies, maxPlies);
+    }
+
+    /**
+     * Executes a tournament of N matches in parallel with explicit timeout per move in milliseconds.
+     */
+    public static TournamentResult runTournament(HeuristicWeights weightsA, HeuristicWeights weightsB,
+                                                 int numGames, int numThreads, int searchDepth,
+                                                 int timeoutMs, int openingRandomPlies, int maxPlies) {
         long startTimeMs = System.currentTimeMillis();
         TournamentResult result = new TournamentResult();
         result.gamesPlayed = numGames;
@@ -184,7 +216,7 @@ public final class HeadlessTournament {
                 @Override
                 public MatchResult call() {
                     return playSingleMatch(whiteWeights, blackWeights, aIsWhite,
-                            searchDepth, openingRandomPlies, maxPlies, seed);
+                            searchDepth, timeoutMs, openingRandomPlies, maxPlies, seed);
                 }
             }));
         }
@@ -232,6 +264,8 @@ public final class HeadlessTournament {
         int games = 40;
         int threads = Math.max(1, Runtime.getRuntime().availableProcessors());
         int depth = 3;
+        boolean depthExplicit = false;
+        int timeoutMs = 60000;
         int randomPlies = 2;
         int maxPlies = 100;
         boolean quiet = false;
@@ -249,6 +283,13 @@ public final class HeadlessTournament {
                     break;
                 case "--depth":
                     depth = Integer.parseInt(args[++i]);
+                    depthExplicit = true;
+                    break;
+                case "--timeout-ms":
+                    timeoutMs = Integer.parseInt(args[++i]);
+                    break;
+                case "--timeout-seconds":
+                    timeoutMs = Integer.parseInt(args[++i]) * 1000;
                     break;
                 case "--opening-random-plies":
                     randomPlies = Integer.parseInt(args[++i]);
@@ -271,12 +312,17 @@ public final class HeadlessTournament {
             }
         }
 
-        if (!quiet) {
-            System.out.printf("Starting Headless Tournament | Games: %d | Threads: %d | Depth: %d | Random Plies: %d\n",
-                    games, threads, depth, randomPlies);
+        // If time is customized but depth was not explicitly capped, allow full IDS progression
+        if (!depthExplicit && timeoutMs != 60000) {
+            depth = SearchEngine.MAX_DEPTH - 1;
         }
 
-        TournamentResult res = runTournament(weightsA, weightsB, games, threads, depth, randomPlies, maxPlies);
+        if (!quiet) {
+            System.out.printf("Starting Headless Tournament | Games: %d | Threads: %d | Depth: %d | Timeout: %d ms | Random Plies: %d\n",
+                    games, threads, depth, timeoutMs, randomPlies);
+        }
+
+        TournamentResult res = runTournament(weightsA, weightsB, games, threads, depth, timeoutMs, randomPlies, maxPlies);
 
         if (quiet) {
             System.out.println(res.toJson());
@@ -293,11 +339,11 @@ public final class HeadlessTournament {
             return;
         }
         String[] parts = raw.split(",");
-        if (parts.length < HeuristicWeights.NUM_WEIGHTS) {
-            throw new IllegalArgumentException("Expected " + HeuristicWeights.NUM_WEIGHTS + " comma-separated integers");
+        if (parts.length < 15) {
+            throw new IllegalArgumentException("Expected at least 15 comma-separated integers, got " + parts.length);
         }
-        int[] arr = new int[HeuristicWeights.NUM_WEIGHTS];
-        for (int i = 0; i < arr.length; i++) {
+        int[] arr = new int[parts.length];
+        for (int i = 0; i < parts.length; i++) {
             arr[i] = Integer.parseInt(parts[i].trim());
         }
         target.fromArray(arr);

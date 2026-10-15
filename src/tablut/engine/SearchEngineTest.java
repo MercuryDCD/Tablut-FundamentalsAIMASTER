@@ -14,6 +14,8 @@ public final class SearchEngineTest {
         testDeepSearchWithoutBook();
         testSearchTimeCutoff();
         testPruningEfficiency();
+        testRepetitionAvoidance();
+        testRepetitionSeekingWhenLosing();
 
         System.out.println("=== All SearchEngine Tests Passed Successfully! ===");
     }
@@ -109,7 +111,7 @@ public final class SearchEngineTest {
         SearchEngine engine = new SearchEngine();
         engine.setUseOpeningBook(false); // Force full tree search
 
-        SearchEngine.SearchResult result = engine.search(state, 500);
+        SearchEngine.SearchResult result = engine.search(state, 1000);
 
         if (result.depthReached < 4) {
             throw new AssertionError("Engine reached inadequate depth: " + result.depthReached);
@@ -172,5 +174,114 @@ public final class SearchEngineTest {
 
         System.out.printf("PASSED (Optimized nodes: %,d vs Unoptimized nodes: %,d)\n",
                 optRes.nodesVisited, unoptRes.nodesVisited);
+    }
+
+    /**
+     * Test 7: Repetition avoidance when holding advantage.
+     * When move M1 leads to a 2-fold repetition draw (score 0), engine must reject M1
+     * and select a positive alternative move.
+     */
+    private static void testRepetitionAvoidance() {
+        System.out.print("Test 7: 2-fold repetition avoidance when winning... ");
+        // Black has +800 material advantage on initial board configuration
+        FastState state = new FastState();
+        state.turn = BoardConstants.BLACK_TURN;
+        UndoInfo undo = new UndoInfo();
+
+        SearchEngine baseline = new SearchEngine();
+        baseline.setUseOpeningBook(false);
+        SearchEngine.SearchResult baseRes = baseline.search(state, 500, 2);
+        int topMove = baseRes.bestMove;
+
+        if (baseRes.bestScore <= 0) {
+            throw new AssertionError("Test setup requires positive advantage, but got: " + baseRes.bestScore);
+        }
+
+        // Simulate topMove to extract its resulting Zobrist hash
+        state.makeMove(topMove, undo);
+        long repHash = state.zobristHash;
+        state.unmakeMove(topMove, undo);
+
+        // Pass repHash into game history: playing topMove now triggers an immediate DRAW (score 0)
+        long[] history = new long[] { repHash };
+        SearchEngine engine = new SearchEngine();
+        engine.setUseOpeningBook(false);
+        SearchEngine.SearchResult res = engine.search(state, 500, 2, history, 1);
+
+        if (res.bestMove == topMove) {
+            throw new AssertionError("Engine picked repeating move " + Move.toUci(topMove) + " instead of non-repeating alternative!");
+        }
+        System.out.printf("PASSED (Advantage=%d, avoided draw %s in favor of %s with score %d)\n",
+                baseRes.bestScore, Move.toUci(topMove), Move.toUci(res.bestMove), res.bestScore);
+    }
+
+    /**
+     * Test 8: Repetition seeking when in losing position.
+     * When normal moves are losing, engine must actively pick the move that triggers
+     * a 2-fold repetition draw (score 0) over a worse alternative.
+     */
+    private static void testRepetitionSeekingWhenLosing() {
+        System.out.print("Test 8: 2-fold repetition seeking when losing... ");
+        FastState state = new FastState();
+        state.board[BoardConstants.THRONE] = BoardConstants.EMPTY;
+        int kSq = BoardConstants.coord(3, 2); // c4
+        state.board[kSq] = BoardConstants.KING;
+        state.kingSquare = (byte) kSq;
+        state.turn = BoardConstants.WHITE_TURN;
+
+        // Clear all other white soldiers so King is alone (massive negative material)
+        for (int i = 0; i < 81; i++) {
+            if (state.board[i] == BoardConstants.WHITE) {
+                state.board[i] = BoardConstants.EMPTY;
+            }
+        }
+
+        // Put black soldiers flanking c4 horizontally and vertically (blocking perimeter escapes)
+        state.board[BoardConstants.coord(3, 1)] = BoardConstants.BLACK; // b4
+        state.board[BoardConstants.coord(3, 3)] = BoardConstants.BLACK; // d4
+        state.board[BoardConstants.coord(1, 2)] = BoardConstants.BLACK; // c2 (blocks escape to c1)
+        state.board[BoardConstants.coord(7, 2)] = BoardConstants.BLACK; // c8 (blocks escape to c9)
+
+        UndoInfo undo = new UndoInfo();
+        int[] moves = new int[MoveGenerator.MAX_MOVES];
+        int numMoves = MoveGenerator.generateMoves(state, moves, 0);
+
+        if (numMoves < 2) {
+            throw new AssertionError("Test requires at least 2 legal moves, but got: " + numMoves);
+        }
+
+        // Baseline search without history evaluates all moves (deep negative score)
+        SearchEngine baseline = new SearchEngine();
+        baseline.setUseOpeningBook(false);
+        SearchEngine.SearchResult baseRes = baseline.search(state, 500, 2);
+
+        // Pick a legal move that is NOT the baseline best move
+        int drawMove = Move.NULL_MOVE;
+        for (int i = 0; i < numMoves; i++) {
+            if (moves[i] != baseRes.bestMove) {
+                drawMove = moves[i];
+                break;
+            }
+        }
+
+        // Simulate drawMove to compute resulting hash
+        state.makeMove(drawMove, undo);
+        long drawHash = state.zobristHash;
+        state.unmakeMove(drawMove, undo);
+
+        // Feed drawHash into history: now drawMove yields score 0 (Draw)
+        long[] history = new long[] { drawHash };
+        SearchEngine engine = new SearchEngine();
+        engine.setUseOpeningBook(false);
+        SearchEngine.SearchResult res = engine.search(state, 500, 2, history, 1);
+
+        if (res.bestMove != drawMove) {
+            throw new AssertionError("Engine failed to pick drawing move " + Move.toUci(drawMove) + ", picked " + Move.toUci(res.bestMove) + " with score " + res.bestScore);
+        }
+        if (res.bestScore != 0) {
+            throw new AssertionError("Expected draw score 0, but got: " + res.bestScore);
+        }
+        System.out.printf("PASSED (Rescued draw %s with score %d vs baseline %d)\n",
+                Move.toUci(res.bestMove), res.bestScore, baseRes.bestScore);
     }
 }

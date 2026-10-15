@@ -208,6 +208,11 @@ Development follows progressive, pedagogical phases: from basic data structures 
 - [x] **Phase 3: Opening Book & Advanced Search Techniques** (Completed, Transposition Table, Move Ordering, Quiescence Search, D4 Opening Book, 40.5x Node Pruning Reduction).
 - [x] **Phase 4: Parameterized Domain Heuristics** (Completed, King Escape Forks, Rhombus Blockade, Keep Fronts, 30.9M evals/sec, 15 Tunable Parameters).
 - [x] **Phase 5: Multi-Core Scaling (4 vCPUs Lazy SMP) & High-Throughput Tuning Pipeline** (Completed, 4-vCPU Lazy SMP coordinator, HeadlessTournament in-RAM simulator, Anytime continuous SPSA optimizer, Atomic checkpoints, and Instant weight injector).
+- [x] **Phase 6: Search & Heuristic Enhancements (Cross-Engine Innovations from Luca's Architecture)** (Completed, GHI Transposition Safety, Lazy Move Selection, Hyatt Lockless XOR TT, Citadel Barrier Correction, and Connected Blockade Chains).
+- [x] **Phase 7: Advanced Tactical Pruning, Search Extensions & Tuning Infrastructure** (Completed, Principal Variation Search (PVS), Aspiration Windows, Quiescence Tactical Safeguards, Zero-Allocation Context Recycling, Corrected Anvil & Pins Heuristics, Active Black Mobility).
+- [x] **Phase 8: Large-Scale Parameter Optimization & Head-to-Head Ablation Benchmarking** (Completed, 938,560 games SPSA overnight optimization, +34.9 Elo gain over baseline, reusable `run_tournament.py` with micro and full-duration time management, empirical resolution of draw rates from 20% down to 0%).
+- [x] **Phase 9: Peer-Engine Benchmarking (Luca's MLP Architecture) & Tactical Refinement Plan** (Completed: 2-0 match victory at 45s/move, Multi-ply $D_4$ opening book expansion to 24 canonical lines/784 symmetric states, adaptive early terminal mate cutoffs reducing mate discovery from 37.7s to 1-5ms, open-field king containment with continuous swarm gradient, 100% verified via `Phase9OptimizationsTest.java`).
+- [x] **Phase 10: Multi-Night Training Strategy & Post-Convergence Progression Roadmap** (Completed: Automated 2-phase pipeline `train_overnight.py` with warm-restart decay and session-relative iteration management, Depth 4 transition with $N=80$, and strategic multi-night progression plan across search tuning, book mining, and VM gauntlet validation).
 
 ---
 
@@ -337,43 +342,223 @@ To avoid wasting valuable compute hours training openings from zero, the book wi
   - Dedicated overnight training with anytime atomic checkpointing, utilizing available CPU threads to maximize simulation games/sec.
   - Zero network latency, zero SSH friction, direct shared memory IPC within the JVM.
 
-#### 5.2 Anytime Continuous Optimization Strategy ("Train Until Budget Depleted")
-* **No Fixed Epoch Limit:** Rather than stopping after a rigid number of hours or games, the tuner operates in an **anytime continuous optimizer mode**. It trains indefinitely with uninterrupted progress until stopped by the user in the morning or when time runs out.
-* **Algorithm:** SPSA (*Simultaneous Perturbation Stochastic Approximation*):
-  1. Maintains active parameter vector $\mathbf{w} \in \mathbb{R}^{15}$.
-  2. Perturbs all 15 parameters simultaneously by $\pm \Delta_k$ to create candidate vectors $\mathbf{w}_k^+$ and $\mathbf{w}_k^-$.
-  3. Spawns headless parallel matches between $\mathbf{w}_k^+$ and $\mathbf{w}_k^-$ at calibrated tactical depth (Depth 3–4 with Quiescence Search).
-  4. Approximates the multi-dimensional win-rate gradient $\hat{g}_k$ and updates $\mathbf{w}_{k+1} = \mathbf{w}_k + a_k \hat{g}_k$.
+#### 5.2 Staged Curriculum Optimization Strategy (Block Coordinate SPSA)
+* **Rationale for Curriculum Partitioning:** Rather than perturbing all 15 parameters simultaneously in a single unconstrained loop (which suffers from high gradient variance where subtle positional parameters are drowned out by macro-tactical swings), the optimizer supports **Curriculum Learning / Block Coordinate SPSA**. Training is partitioned into 3 specialized stages plus 1 final joint calibration:
+  1. **Stage 1 (`--stage material`):** Core Tactical Balance & King Escapes (6 parameters: `whitePiece`, `blackCaptured`, `whiteCaptured`, `blackPiece`, `kingSingleEscape`, `kingDoubleEscape`).
+  2. **Stage 2 (`--stage positional`):** Geometric Formations & Territorial Control (5 parameters: `rhombusBlockade`, `campFrontPreserved`, `diamondOccupancy`, `kingSurroundedThrone`, `kingContainment`).
+  3. **Stage 3 (`--stage micro`):** Micro-Heuristics & Dynamic Mobility (4 parameters: `kingDistance`, `kingMobility`, `blackMobility`, `kingVulnerabilityPenalty`).
+  4. **Stage 4 (`--stage all`):** Joint Fine-Tuning across all 15 parameters with reduced step sizes.
+* **Algorithm (Block-Coordinate SPSA):**
+  1. Generates perturbation direction $\Delta_k \in \{-1, +1\}^{15}$, strictly masking inactive dimensions ($\Delta_i = 0$ for $i \notin \text{Stage}$).
+  2. Creates perturbed candidates: $\mathbf{w}_k^+ = \mathbf{w}_k + c_k S \odot \Delta_k$ and $\mathbf{w}_k^- = \mathbf{w}_k - c_k S \odot \Delta_k$.
+  3. Evaluates candidates in color-balanced headless self-play (`HeadlessTournament`).
+  4. Approximates partial gradient and updates active weights: $\mathbf{w}_{k+1}[i] = \Pi_{\Omega}(\mathbf{w}_k[i] + a_k g_k[i] S_i^2)$ while frozen weights remain strictly invariant.
 * **Atomic Checkpointing & Fault Tolerance:**
-  - After each iteration, the tuner atomically flushes the current best weight vector $\mathbf{w}^*$, win rate, iteration index, and parameters to `checkpoint_weights.json`.
-  - If the training session is terminated at any point (Ctrl+C, closed lid, power off), **zero progress is lost**; the latest validated checkpoint is immediately usable.
+  - After each iteration, atomically flushes $\mathbf{w}^*$, win rate, active stage, iteration index, and parameters to `checkpoint_weights.json`.
+  - Re-invoking with `--resume` seamlessly ingests previous checkpoint weights and pivots to the next stage without losing prior optimization gains.
 
-#### 5.3 Local Execution & Process Management
-* **Overnight Autonomous Execution:**
-  - Can be run in foreground with live console dashboard or in background logging to `training.log`:
-    ```powershell
-    python scripts/train_spsa.py --threads 8 --depth 3
-    ```
-  - Displays real-time telemetry: iterations, games played, NPS, win rate delta, and current parameter vector.
+#### 5.3 Local Execution & Training Guide
+* **Automated Cyclical Curriculum Protocol (Overnight Optimization):**
+  - **The Tactical Sweet Spot (Depth 3):** Simulates at ~8–12 games/sec across 16 CPU threads, generating 200,000+ games in 8 hours with deep tactical resolution via Quiescence Search (4–9 plies).
+  - **Calibrated Hyperparameters:**
+    - `--depth 3`: Balanced tactical resolution.
+    - `--games 80`: 40 games as White, 40 as Black per step ($\text{SE} \approx 5.5\%$).
+    - `--iters-per-stage 120`: 120 steps per stage, completing ~7–8 full cycles per 8-hour session.
+    - `--learning-rate 6.0`: Calibrated cooling trajectory $a_k = 6.0 / (k + 15)^{0.602}$.
+    - `--perturbation 1.0`: $\pm 5-8\%$ nominal exploration step.
+    - `--auto-apply`: Automatically patches `HeuristicWeights.java` and recompiles binaries upon exit.
+
+```powershell
+# Overnight Run (Continuous cyclical curriculum across all stages, depth 3, 80 games/step):
+python scripts/train_spsa.py --curriculum --depth 3 --games 80 --iters-per-stage 120 --learning-rate 6.0 --auto-apply
+
+# Subsequent Nights (Seamlessly resumes from checkpoint_weights.json into the next cycle):
+python scripts/train_spsa.py --curriculum --resume --depth 3 --games 80 --iters-per-stage 120 --learning-rate 6.0 --auto-apply
+
+# Optional Step-by-Step Manual Execution:
+python scripts/train_spsa.py --stage material --depth 2 --games 60 --max-iterations 100
+python scripts/train_spsa.py --stage positional --depth 3 --games 60 --resume --max-iterations 200
+python scripts/train_spsa.py --stage micro --depth 3 --games 60 --resume --max-iterations 300
+python scripts/train_spsa.py --stage all --depth 3 --games 60 --resume --max-iterations 450 --learning-rate 3.0
+
+# Manual Weight Ingestion & Binaries Recompilation:
+python scripts/apply_weights.py
+```
 * **Instant Weight Application:**
   - A helper utility (`scripts/apply_weights.py`) reads `checkpoint_weights.json` and updates the default constant values in `HeuristicWeights.java` with a single command.
 
 #### 5.4 Phase 5 Delivered Components & Validation
 1. `ParallelSearchEngine.java`: 4-thread Lazy SMP search coordinator with shared Transposition Table for competition VM.
 2. `HeadlessTournament.java`: High-throughput simulator running headless matches without GUI, networking, or sleep calls, utilizing parallel CPU threads.
-3. `scripts/train_spsa.py`: Anytime continuous SPSA optimizer with atomic checkpointing and parallel worker pool.
+3. `scripts/train_spsa.py`: Staged curriculum SPSA optimizer (`material`, `positional`, `micro`, `all`) with atomic checkpointing and parameter masking.
 4. `scripts/apply_weights.py`: Instant weight injector updating `HeuristicWeights.java` and recompiling engine binaries.
 5. `ParallelSearchEngineTest.java`: Verified 4-thread Lazy SMP scaling, mate-in-1 detection for White and Black, and clean thread lifecycle.
 
+#### 5.5 Two-Fold Repetition Detection System (Draw Avoidance & Tactical Exploitation)
+* **Theoretical Rationale & Problem Formulation:**
+  Under official Ashton Tablut rules, when an identical board configuration and active turn occurs twice, the match immediately terminates as a draw (`WINNER_DRAW`). Without match history injected into the adversarial search tree, positions with strong positional advantages (e.g., $+770$) frequently oscillated back into previously visited states, forfeiting guaranteed wins into involuntary draws (35% draw rate in initial depth-3 simulations).
+* **Algorithmic Search-Tree Architecture (`SearchEngine.java` & `ParallelSearchEngine.java`):**
+  - **History Ingestion:** Ingests `long[] gameHistory` directly into `search(rootState, timeBudgetMs, maxDepth, history, historyCount)` from `TablutAgentClient` and `HeadlessTournament`.
+  - **Search-Path Tracking:** Maintains a stack-allocated branch path `searchPath[MAX_DEPTH]` to simultaneously catch cycles within the search tree.
+  - **Pre-TT Node Validation:** Inside `negamax()`, checks `isRepetition(state.zobristHash, ply)` immediately after terminal check and *before* Transposition Table probing.
+  - **Zero-Sum Draw Scoring:** Evaluates repeated states as `DRAW_SCORE = 0`. Crucially, this score is returned immediately without writing to the shared TT, preserving TT entry path-independence.
+* **Dual Strategic Dynamics:**
+  - *Winning Perspective ($\text{Score} > 0$):* The engine evaluates drawing moves as inferior ($0 < \text{Score}$), dynamically rejecting repetitions in favor of progressive lines (verified: avoids `e2g2` in favor of `e2c2`).
+  - *Losing Perspective ($\text{Score} < 0$):* The engine recognizes a draw as superior to defeat ($0 > \text{Score}$), actively choosing repetitions to rescue a half-point (verified: rescues `c4c5` with score $0$ vs baseline $-1235$).
+* **Empirical Validation & Benchmark:**
+  - `SearchEngineTest.java`: 100% pass on Test 7 (Repetition Avoidance when Winning) and Test 8 (Repetition Seeking when Losing).
+  - `HeadlessTournament.java`: Reduced self-play draw rate by **43%** (from 7/20 down to 4/20), converting stale cycles into decisive White and Black victories.
+  - SPSA Optimization: Eliminates gradient damping ($y^+ - y^-$), accelerating parameter convergence during training.
+
 ---
 
-## 8. Verified External References & Reference Codebases
+### Phase 6: Search & Heuristic Enhancements (Cross-Engine Innovations from Luca's Architecture) [COMPLETED]
+* **Educational Objective:** Understand advanced search interaction subtleties (Graph History Interaction, lock-free concurrency with mathematical hashing integrity, on-demand lazy move sorting) and refine board geometry definitions (citadel boundary effects vs perimeter escapes).
+* **Cross-Engine Knowledge Ingestion (collaborative exchange with teammate Luca Peratella / `team/luca`):**
+  1. **Graph History Interaction (GHI) in Transposition Tables:**
+     - *Theoretical Problem:* In games with cycle/repetition draw rules, state evaluations are path-dependent. If a subtree encounters a repetition draw (score 0), storing this value or an alpha/beta cutoff derived from it in the global TT risks corrupting evaluations in alternative branches that reach the same board state without that history.
+     - *Architecture & Implementation:* Introduced `repetitionEventCounter`. When entering `negamax()`, record `int repAtEntry = repetitionEventCounter`. If any descendant in the explored subtree triggers a repetition (`repetitionEventCounter != repAtEntry`), completely bypass writing the node to the Transposition Table.
+  2. **In-Place Lazy Move Selection (`selectBest`):**
+     - *Theoretical Problem:* `MoveOrderer.orderMoves()` sorted the full candidate array of 30–50+ legal moves upfront ($O(N^2)$). In 80–90% of all cut-nodes, an alpha-beta cutoff is triggered within the first 1–2 moves, wasting sorting cycles on the remaining 28–48 moves.
+     - *Architecture & Implementation:* Replaced upfront full sorting with an on-demand lazy selection loop (`scoreMoves` + `selectBest`). On iteration `i`, find the maximum heuristic score across indices `[i .. numMoves-1]` and swap it into position `i`. If a beta cutoff occurs, no further sorting work is performed.
+  3. **Bob Hyatt's Lockless XOR Hash Verification for Lazy SMP:**
+     - *Theoretical Problem:* In multi-threaded Lazy SMP search, concurrent reads and writes across worker threads without synchronization can cause torn reads (e.g., upper bits from write A, lower bits/score from write B).
+     - *Architecture & Implementation:* Replaced parallel arrays with 2 64-bit primitive arrays: `tableData` (packed score, move, depth, flag, age) and `tableLocks` (`zobristHash ^ tableData`). Upon probing, verify `(lock ^ data) == hash`. Any torn read resulting from thread contention fails the 64-bit equality and cleanly degrades to a safe cache miss, delivering 100% thread safety with zero locking overhead and reduced memory footprint (32 MB vs 38 MB).
+  4. **Strict Citadel Barrier Escape Correction (20 Exits vs 32 Border Squares):**
+     - *Theoretical Problem:* As proven in Luca's `LaneCheck.java`, citadels on rows and columns 3, 4, 5 terminate at the border on camp squares (`d9, e9, f9`, `d1, e1, f1`, `a4, a5, a6`, `i4, i5, i6`) where the King cannot enter. Naive ray-casting heuristics that count open lines to the board edge produce an 81% false positive rate ("ghost escape lanes"). Exactly 20 border squares are true escapes (32 border squares minus 12 camp border squares).
+     - *Architecture & Implementation:* Precomputed `BoardConstants.MIN_DISTANCE_TO_ESCAPE[81]`, measuring true shortest Manhattan distance to any of the 20 real win squares. Replaced naive edge distance in `WhiteHeuristics.java`, preventing King suicidal rushes toward edge citadels.
+  5. **Connected Blockade Chains (Orthogonal & Diagonal Pawn Links):**
+     - *Theoretical Problem:* Isolated black soldiers are easily bypassed by the King. Connected chains of black soldiers form impermeable barriers.
+     - *Architecture & Implementation:* Added `BlackHeuristics.countConnectedChains(state)` and parameter `blackConnectedChains = 20` (16th weight), rewarding dense, cohesive perimeter barricades.
+* **Delivered Components & Validation:**
+  - `src/tablut/engine/MoveOrderer.java`: On-demand lazy move selection (`scoreMoves` and `selectBest`).
+  - `src/tablut/engine/TranspositionTable.java`: Hyatt Lockless XOR verification with 64-bit bitwise packing.
+  - `src/tablut/engine/SearchEngine.java` & `ParallelSearchEngine.java`: GHI subtree repetition tracking and lazy ordering integration across master and helper threads.
+  - `src/tablut/engine/BoardConstants.java`: Precomputed `MIN_DISTANCE_TO_ESCAPE` table eliminating ghost escapes.
+  - `src/tablut/engine/WhiteHeuristics.java`: Corrected 20-exit King distance geometry.
+  - `src/tablut/engine/BlackHeuristics.java`: Connected blockade chains metric.
+  - `src/tablut/engine/HeuristicWeights.java`, `checkpoint_weights.json`, and `scripts/train_spsa.py`: 16-parameter serialization and positional stage support.
+  - `src/tablut/engine/Phase6EnhancementsTest.java`: 5/5 dedicated tests passing (lazy ordering, Hyatt XOR TT, GHI safety, citadel geometry, connected chains).
+  - Full regression validation: 100% pass across all existing test suites (`SearchEngineTest`, `ParallelSearchEngineTest`, `HeuristicEvaluationTest`, `MoveOrdererTest`, `TranspositionTableTest`, `OpeningBookTest`, `QuiescenceSearchTest`, `PerftTest`, `RuleVerificationTest`).
 
-The project ingests insights, opening structures, and heuristic weights from four primary external sources:
+---
+
+### Phase 7: Advanced Tactical Pruning, Search Extensions & Tuning Infrastructure [COMPLETED]
+* **Educational Objective:** Master modern search refinements that reduce the effective branching factor without risking tactical blunders: Principal Variation Search (PVS) with null-window scout probes, Aspiration Windows around previous iterative scores, tactical safeguards in Quiescence Search (combating Horizon blindness and Delta Pruning traps), zero-allocation `ThreadLocal` context recycling for long-running headless simulations, and strict parity between referee server rules and client history tracking.
+* **Delivered Components & Architectural Rationale:**
+  1. **Principal Variation Search (PVS / NegaScout):**
+     - *Theoretical Rationale:* Once the first move (PV move or TT move) is searched with the full window $[\alpha, \beta]$, all subsequent sibling moves are conjectured to be inferior. PVS evaluates these moves using a minimal *null-window* (zero-window) probe $[-\alpha - 1, -\alpha]$. If the scout search fails low ($\le \alpha$), the branch is refuted with minimal node expansions. Only if the scout fails high ($> \alpha$) is a full re-search $[-\beta, -\alpha]$ triggered.
+     - *Implementation:* Integrated into `SearchEngine.java` and `ParallelSearchEngine.java` (both `MasterWorker` and `HelperWorker`).
+     - *Empirical Impact:* At depth 5, reduces searched nodes by **7.7%** (from 199,262 to 183,902 nodes) and accelerates compute time by **31.7%** (from 363 ms down to 248 ms).
+  2. **Aspiration Windows:**
+     - *Theoretical Rationale:* In iterative deepening, the score at depth $d$ rarely deviates drastically from depth $d-1$. Rather than searching $[-\infty, +\infty]$, the engine restricts the initial search window to $[S_{d-1} - \Delta, S_{d-1} + \Delta]$ for $d \ge 4$.
+     - *Implementation:* Set calibrated $\Delta = 120$ centipawns (wider than a standard Black soldier of 80 cp to prevent spurious oscillation fail-lows across odd/even plies). On fail-low or fail-high, the engine smoothly widens the window to full infinity.
+  3. **Tactical Safeguards & Delta Pruning Bypass in Quiescence Search:**
+     - *Theoretical Hazard:* Standard Delta Pruning prunes noisy leaf nodes if $\text{standPat} + \text{DELTA} < \alpha$. In Tablut, when the White King is near an escape square or threatened with encirclement, a move may secure an instant win ($\ge 90,000$ points) or mate defense without capturing any material. Traditional delta pruning was prematurely discarding these winning non-capture escape moves.
+     - *Implementation:* Added `isKingThreatened(state)` in `QuiescenceSearch.java`. If the King is threatened or within 2 squares of an escape (`BoardConstants.MIN_DISTANCE_TO_ESCAPE[kingSq] <= 2`), delta pruning is completely bypassed, and King escapes/captures are prioritized at index 0.
+  4. **Citadel Anvil & Open-Field Pins Heuristic Corrections:**
+     - *White Heuristics (`WhiteHeuristics.java`):* Replaced `IS_CAMP_ANVIL` with `IS_CAMP` in `evaluateKingVulnerability`, correctly recognizing that all 16 camp squares serve as lethal capture anvils for Black. Added check for double-hostile flanking in the open field, flagging critical mate danger ($+4$) when the King is flanked by 2 hostiles or 1 hostile + camp/throne anvil.
+     - *Black Heuristics (`BlackHeuristics.java`):* Added open-field pin detection in `evaluateKingEncirclement` when the King is caught between a Black soldier and a citadel/throne barrier. Implemented active `computeBlackMobility(state)` rewarding free orthogonal moves and fully connected to `weights.blackMobility`.
+  5. **ThreadLocal Zero-Allocation Context Recycling (`HeadlessTournament.java`):**
+     - *Performance Hazard:* In Phase 5, running 200,000+ SPSA games instantiated 2 new `SearchEngine` and `FastState` objects per game, causing ~67 MB heap churn per match and triggering aggressive Garbage Collection pauses that slowed training throughput by 40%.
+     - *Implementation:* Introduced `ThreadLocal<EngineContext>` caching reusable preallocated engines, boards, undo stacks, and move arrays per worker thread. Reduced heap allocations to **0 bytes per match**, completely eliminating GC pause jitter.
+  6. **Dynamic Table Repetition Synchronization with Official Referee (`TablutAgentClient.java`):**
+     - *Protocol Invariant:* In `GameAshtonTablut.java`, the official course server executes `this.drawConditions.clear()` whenever a piece is captured, resetting the two-fold repetition history. `TablutAgentClient` now mirrors this logic by detecting piece count decrements (`whiteCount` or `blackCount`) and resetting `historyCount = 0`, ensuring 100% exact synchronization between client draw-avoidance and server adjudication.
+  7. **Delivered Suite & Verification:**
+     - `src/tablut/engine/Phase7OptimizationsTest.java`: 5/5 dedicated verification tests passing (Quiescence tactical bypass, White camp anvils, Black pins & mobility, PVS depth-5 acceleration, HeadlessTournament context recycling).
+     - Full regression certification: 100% pass across all 8 test suites in the repository.
+
+---
+
+### Phase 8: Large-Scale Parameter Optimization & Head-to-Head Ablation Benchmarking [COMPLETED]
+* **Educational & Research Objective:** Understand stochastic gradient-free parameter optimization in highly asymmetric games, empirical convergence over nearly 1 million simulated games, and rigorous head-to-head ablation testing with color symmetry, confidence intervals, and Elo estimation.
+* **Overnight SPSA Optimization Findings (25 Cycles, 11,733 Iterations, 938,560 Matches):**
+  - **Scale & Throughput:** Executed continuously for 7.55 hours (27,182 s) across 16 worker threads, simulating **938,560 complete games** at an average rate of **28.5 games/s** directly in RAM with zero memory leaks or GC degradation.
+  - **SPSA Convergence Dynamics:** The perturbation learning rate cooled to $a_k = 0.02$, with candidate winrates stabilizing at **$51.2\%$** against perturbed versions, confirming mathematically sound convergence into a robust local optimum.
+  - **Tactical Parameter Adaptations:**
+    1. *Black Material Re-Evaluation (`blackPiece` +33%, `blackCaptured` +33%):*
+       - `blackPiece` increased from 79 to 105 (+26) and `blackCaptured` from 72 to 96 (+24).
+       - *Rationale:* Naive heuristics assumed Black could afford heavy piece attrition due to starting with 16 pawns vs 9. The optimizer proved that **each individual Black soldier is a critical link in the perimeter blockade**; losing 1–2 attackers immediately creates unfillable escape lanes.
+    2. *Breaking Static Dogmatism (`kingSurroundedThrone` -16%, `rhombusBlockade` -12%, `blackConnectedChains` -40%):*
+       - `kingSurroundedThrone` decreased from 280 to 235 (-45), `rhombusBlockade` from 100 to 88 (-12), and `blackConnectedChains` from 20 to 12 (-8).
+       - *Rationale:* Over-valuing static geometric formations caused *tactical paralysis*—Black soldiers refused to leave blockade squares to intercept an escalating King threat. Lowering these bonuses gives Black the **tactical agility** to break formation and actively intercept escapes.
+    3. *Polarizing King Escape Threat Assessment (`kingDoubleEscape` +263, `kingSingleEscape` -78):*
+       - `kingDoubleEscape` rose to 18,413 while `kingSingleEscape` dropped to 1,446.
+       - *Rationale:* Single escape corridors are routinely defended by competent opponents. The engine now heavily prioritizes creating or defending against **unblockable 2-way forks**.
+    4. *Preservation of Citadels Doors (`campFrontPreserved` 60 -> 61):*
+       - Re-validated the "Keep the Fronts" rule ($e2, e8, b5, h5$) as an immutable structural defense.
+* **Reusable Head-to-Head Ablation Infrastructure (`run_tournament.py` & `HeadlessTournament.java`):**
+  - **Strict Color Alternation:** Enforces 50% White / 50% Black pairings between Player A (Current) and Player B (Original) to neutralize Ashton board asymmetry.
+  - **Dynamic Ingestion:** Extracts weights directly from `HeuristicWeights.java` or `checkpoint_weights.json`.
+  - **Dual Evaluation Modes:**
+    - *Micro-Tournaments (Depth-Capped):* Instant sanity check at $d=3$ (100 games in 4.4s) or $d=4$ (30 games in 8.1s).
+    - *Full-Duration Tournaments (Time-Governed):* Sets `--timeout-seconds` (e.g. 1s, 5s, 60s per move) letting IDS search dynamically using its two-tier time management, matching tournament conditions.
+  - **Empirical Resolution of Draw Rates:**
+    - *At Depth 3 (100 games):* 20.0% draws, +34.9 Elo gain (55.0% vs 45.0%). Draws caused by the *horizon effect* where shallow search cannot calculate multi-ply breakthrough sequences.
+    - *At Depth 4 (30 games):* Draws drop to **3.3%** (1/30) as deeper lookahead resolves breakthroughs.
+    - *Under Time-Budget ($\ge 1\text{ s/move}$, 20 games):* Draws dropped to **0.0%** (20 decisive wins/losses), completely eliminating horizon shuffling.
+
+---
+
+### Phase 9: Peer-Engine Benchmarking (Luca's MLP Architecture) & Tactical Refinement Plan [COMPLETED]
+* **Educational & Research Objective:** Compare classical high-throughput heuristic evaluation against multi-layer perceptron neural network evaluation (MLP) under official competition constraints (45s per move, 4 vCPUs, Debian VM), diagnose late-game inefficiencies, and implement an algorithmic refinement plan.
+* **Empirical Head-to-Head Tournament Results (45s / move, Official `Server.jar`):**
+  - **Match Pair Execution:** Conducted a color-balanced 2-game tournament via `scripts/tournament_vs_luca.ps1` pitting `Antigravity` against Luca's `TablutNegamaxClient` (`NeuralEvaluator`, 40 continuous geometric features, 1,402 parameters, 4-thread Lazy SMP):
+    1. *Game 1 (Antigravity WHITE vs Luca BLACK):* **Antigravity Win** in 29 plies (837.8 s). Instant $D_4$ opening `e3 -> d3` (3 ms). At ply 8 (`c7 -> b7`, depth 12, 52.8M nodes), Antigravity detected the forced King escape sequence, calculating mate at ply 9 (`Score: 99987`) while Luca's neural evaluator evaluated the position as normal (`-71.8`). King escaped through `c9`.
+    2. *Game 2 (Antigravity BLACK vs Luca WHITE):* **Antigravity Win** in 46 plies (1,452 s). Instant opening `e2 -> c2` (6 ms). Antigravity achieved sustained depths 8–9 exploring up to 217.5M nodes per move (~5.37M NPS). White was squeezed into the center and encircled on `d4` at ply 23 (`Score: 99999`).
+  - **Total Score:** **2 - 0 (100% Winrate)** for Antigravity.
+* **Core Architectural Comparison:**
+  - *Evaluation Cost:* Antigravity linear evaluator costs ~32 ns/node; Luca's 40-feature MLP costs ~2,880 ns/node (~90x slower).
+  - *Node Throughput:* Antigravity searches 3.5M–5.4M NPS across 4 cores; Luca searches 155k–175k NPS.
+  - *Search Depth Delta:* In 40.5s decision time, Antigravity consistently searches 4–5 plies deeper (depth 8–12 vs depth 6–7), which decisively dominates nonlinear feature modeling in a high-branching game like Tablut ($b \approx 45$).
+* **Implemented Algorithmic Refinement (3 Pillars):**
+  1. **Multi-Ply Opening Book Expansion (`OpeningBook.java`):**
+     - Expanded canonical $D_4$ opening lines from 12 lines (3 plies) to **24 canonical lines (up to 6 plies)**, including specific counter-responses to Luca's moves (`f1f3` countered with `d5d6`, `e6f6` countered with `e8g8`).
+     - Stored 98 canonical positions, expanded across all 8 dihedral symmetries to **784 precomputed opening states**.
+     - Ensures opening moves execute in **$< 1$ ms**, saving 80–100 seconds of clock budget across the first 3 turns.
+  2. **Adaptive Early Terminal Mate Cutoff (`SearchEngine.java` / `ParallelSearchEngine.java`):**
+     - Integrated root-level early termination when `bestScoreThisDepth >= WIN_THRESHOLD`.
+     - In `ParallelSearchEngine`, signals `coordinator.stopped = true` immediately, halting all helper workers and aborting remaining root move evaluations.
+     - In aspiration search, bypasses costly fail-high re-searches (`[-INFINITY, INFINITY]`) if a proven forced mate has already been detected.
+     - *Empirical Impact:* Reduced mate-in-1 / mate-in-2 resolution from tens of seconds down to **1–5 ms** (only 8–20 nodes evaluated).
+  3. **Open-Field King Containment & Dynamic Strangling (`BlackHeuristics.java`, `HeuristicWeights.java`):**
+     - Introduced parameter `kingOpenFieldContainment` (index 16, default 18, bounded `[0, 80]`).
+     - Implemented `computeOpenFieldContainment(FastState, kRow, kCol)`: activates only when the King evacuates the center 3x3 zone ($d(\text{King}, \text{Throne}) \ge 2$), rewarding Black soldiers within 4 Manhattan steps with $(5 - \text{dist})$.
+     - Delivers a smooth, continuous positional gradient guiding Black pieces to swarm escaping Kings and collapse escape angles.
+* **Verification & Testing (`Phase9OptimizationsTest.java`):**
+  - 100% pass across all 5 verification tests: multi-ply opening lines (including Game 1 & 2 peer counters), single-threaded early mate cutoff, 4-thread parallel early mate cutoff, open-field strangling swarm gradient, and tactical non-regression.
+
+---
+
+### Phase 10: Multi-Night Training Strategy & Post-Convergence Progression Roadmap [COMPLETED]
+* **Educational & Strategic Rationale:**
+  - *Diminishing Returns of Static Evaluation Tuning:* Running continuous SPSA indefinitely against the exact same 17-parameter linear evaluation function yields asymptotically diminishing returns once the global basin of attraction is located. Further iterations simply oscillate around local minima ($< 3\text{ Elo}$).
+  - *Engine Development Progression:* In elite competitive game engines (Stockfish, Ethereal, Berserk), once static evaluation converges, breakthrough Elo gains stem from three orthogonal dimensions: (1) eliminating short-horizon evaluation bias via increased search depth, (2) search and pruning hyperparameter calibration, and (3) deep offline opening book expansion.
+* **Delivered Components & Infrastructure (`scripts/`):**
+  1. **Automated 2-Phase Overnight Training Pipeline (`scripts/train_overnight.py`):**
+     - Encapsulates sequential execution with graceful `SIGINT` (Ctrl+C) trapping, automatic atomic checkpoints, and optional compilation (`--auto-apply`).
+     - *Phase 1 (Warm-Up & Targeted Acclimatization):* Solves the variance-coupling problem of newly introduced parameters (e.g., `kingOpenFieldContainment`, index 16). Runs 300 iterations at Depth 3 strictly across the 7 `positional` parameters with $N=60$ color-balanced matches. Fast execution (~12–15 min at 23 games/s) allows new structural features to settle into their relative scale without destabilizing pre-converged material/escape weights.
+     - *Phase 2 (Global Covariance Fine-Tuning):* Transitions to Depth 4 searching all 17 parameters jointly with $N=80$ games per step. Deeper lookahead combined with Quiescence Search resolves 4–8 ply tactical combinations, ensuring the linear evaluator learns genuine positional compensation rather than patching short-horizon myopic blunders.
+  2. **Learning Rate Warm-Restart & Session Isolation (`scripts/train_spsa.py`):**
+     - *Problem:* After 11,732 prior iterations, standard SPSA power-law decay reduced learning rate $a_k$ to $\approx 0.028$, effectively freezing weight updates upon resuming. Furthermore, absolute iteration thresholding caused premature stops.
+     - *Solution:* Implemented `--warm-restart` resetting step-decay $k$ to relative session steps ($a_k \approx 1.50$), restoring exploratory gradient descent power. Fixed `--max-iterations` to evaluate relative session iterations.
+* **Consolidated Multi-Night Optimization Roadmap:**
+  - **Night 1 (Baseline Depth 4 Transition):** 2-phase pipeline (`train_overnight.py`): Phase 1 positional warm-up $\to$ Phase 2 joint Depth 4 optimization ($N=80$, ~1,000 iterations). Eliminates short-horizon bias and settles 17-parameter covariances.
+  - **Night 2 (Search & Pruning Hyperparameter Tuning):** Tune tree search dynamics: Aspiration window width ($\delta \approx 35\text{--}50\text{ cp}$), killer move allocation tiers, history heuristic decay rates ($\gamma$), and dynamic time management coefficients ($b_{\text{eff}} \approx 3.5\text{--}4.2$).
+  - **Night 3 (Deep Offline Opening Book Mining):** Run high-depth self-play (Depth 7–8 / 15s per move with 4-thread Lazy SMP) across the first 4–6 plies. Encode dominant lines into `OpeningBook.java` using $D_4$ dihedral group symmetry to expand the opening book from 784 states to $>3,000$ solved positions ($< 0.01\text{ ms}$ instant moves, conserving 80–100s clock budget for endgames).
+  - **Night 4 (Blunder Mining & Feature Discovery):** Automated parsing of self-play losses and draws against rival engines (e.g., Luca's MLP). Formulate and integrate targeted geometric heuristics for recurring tactical blind spots.
+  - **Night 5+ (Competition VM Gauntlet & Stability Audit):** 50-game continuous match gauntlet under exact tournament VM conditions (4 vCPUs, 8 GB RAM, 45s timeout). Verifies zero Garbage Collector stalls, strict 0.0% CPU usage on opponent turns via blocking socket reads, and zero disk saturation.
+
+---
+
+## 9. Verified External References & Reference Codebases
+
+The project ingests insights, opening structures, and heuristic weights from five primary external sources:
 
 | Source | Type / Author | Key Concepts Ingested | Target Phase |
 | :--- | :--- | :--- | :--- |
-| **`An_Upper_Bound_on_the_Complexity_of_Tablut.pdf`** | Academic Paper<br>*(Andrea Galassi, UNIBO 2021)* | • State-space complexity upper bound ($1.4 \times 10^{27}$).<br>• Formal $D_4$ dihedral group symmetry (4 axes, 8 transforms).<br>• Subspace analysis: Escape endpoints ($2.3 \times 10^{26}$) vs King captures ($4.6 \times 10^{26}$). | **Phase 1, 3** *(Applied)* |
+| **`docs/references/An_Upper_Bound_on_the_Complexity_of_Tablut.pdf`** | Academic Paper<br>*(Andrea Galassi, UNIBO 2021)* | • State-space complexity upper bound ($1.4 \times 10^{27}$).<br>• Formal $D_4$ dihedral group symmetry (4 axes, 8 transforms).<br>• Subspace analysis: Escape endpoints ($2.3 \times 10^{26}$) vs King captures ($4.6 \times 10^{26}$). | **Phase 1, 3** *(Applied)* |
 | **`gmurro/tablut`**<br>*(brAInmates)* | Champion Codebase<br>*(1st Place UNIBO 2020)* | • White diamond formation $\{d3, f4, d6, f7\}$.<br>• Black 8-tile Rhombus blockade $\{c2, g2, b3, h3, b7, h7, c8, g8\}$.<br>• Normalized feature weights (White: 35/20/18/18/7/2, Black: 48/35/15/2). | **Phase 3** *(Book)*<br>**Phase 4** *(Heuristics)* |
 | **`carlo98/tablut-THOR`**<br>*(THoR)* | Podium Codebase<br>*(3rd Place UNIBO 2020)* | • "Keep the fronts" camp doorway discipline.<br>• "Aggressive King" escape corridor pressure.<br>• Genetic algorithm search framework (`genetic_search.py`). | **Phase 4** *(Heuristics)*<br>**Phase 5** *(Tuning)* |
 | **Hnefatafl Strategy Forum**<br>*(Aage Nielsen & Casshern)* | Strategic Theory<br>*(Tafl Players Community)* | • Foundational opening move for Black: $e2 \to c2$.<br>• Sequential file closure: $e2\text{-}c2 \to b5\text{-}b7 \to e8\text{-}g8 \to h5\text{-}h3$.<br>• White counter-play: lateral evacuation ($d3, f4, c4$). | **Phase 3** *(Book)*<br>**Phase 4** *(Heuristics)* |
+| **`Luca Peratella (team/luca)`**<br>*(MLP Architecture & Search Optimizations)* | Teammate Codebase & Report<br>*(UNIBO 2026/2027)* | • Graph History Interaction (GHI) subtree repetition tracking.<br>• In-place lazy move selection (`selectBest`).<br>• Lock-free shared TT with Robert Hyatt's XOR verification.<br>• Citadel barrier escape correction (20 true exits vs 32 border squares). | **Phase 6** *(Search & Heuristics)* |

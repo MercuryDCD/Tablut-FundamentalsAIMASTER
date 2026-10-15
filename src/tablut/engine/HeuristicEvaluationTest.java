@@ -49,10 +49,8 @@ public final class HeuristicEvaluationTest {
             throw new AssertionError("Mismatch between individual heuristics and total score!");
         }
 
-        // White material = 8 * 140 = 1120. Black captured = 0. King distance penalty = 4 * 30 = 120. Total White = 1000.
-        // Black material = 16 * 80 = 1280. White captured = 0. Fronts = 4 * 60 = 240. Containment = 8 * 35 = 280. Total Black = 1800.
-        // White perspective = 1000 - 1800 = -800.
-        if (totalWhitePerspective < -1500 || totalWhitePerspective > 500) {
+        // Calibrated weights: White ~ 880, Black ~ 2444. White perspective ~ -1564 to -1816.
+        if (totalWhitePerspective < -2500 || totalWhitePerspective > 500) {
             throw new AssertionError("Initial score out of reasonable bounds: " + totalWhitePerspective);
         }
 
@@ -275,11 +273,11 @@ public final class HeuristicEvaluationTest {
         }
 
         w2.resetToDefaults();
-        if (w2.whitePiece != 140) {
+        if (w2.whitePiece != new HeuristicWeights().whitePiece) {
             throw new AssertionError("Reset to defaults failed!");
         }
 
-        System.out.println("PASSED (15 parameters serialized/deserialized seamlessly)");
+        System.out.println("PASSED (17 parameters serialized/deserialized seamlessly)");
     }
 
     private static void testEvaluationThroughput() {

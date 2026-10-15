@@ -100,6 +100,55 @@ public final class MoveOrderer {
     }
 
     /**
+     * Precomputes heuristic priority scores for all candidate moves into scoreStack.
+     * Must be invoked prior to iterating with selectBest.
+     */
+    public void scoreMoves(FastState state, int[] moves, int numMoves, int ttMove, int ply) {
+        if (numMoves <= 0) return;
+        int safePly = Math.min(ply, SearchEngine.MAX_DEPTH - 1);
+        int[] scores = scoreStack[safePly];
+        int k1 = killerMoves[safePly][0];
+        int k2 = killerMoves[safePly][1];
+
+        for (int i = 0; i < numMoves; i++) {
+            scores[i] = scoreMove(state, moves[i], ttMove, k1, k2);
+        }
+    }
+
+    /**
+     * Lazily selects the highest-scoring move among remaining candidates from [index .. numMoves-1],
+     * swaps it to position index, and returns the selected move.
+     * 
+     * In Alpha-Beta search, cutoffs typically occur on the 1st or 2nd move.
+     * Using selectBest avoids O(N^2) sorting work for the remaining unvisited moves.
+     */
+    public int selectBest(int[] moves, int numMoves, int index, int ply) {
+        int safePly = Math.min(ply, SearchEngine.MAX_DEPTH - 1);
+        int[] scores = scoreStack[safePly];
+
+        int bestIdx = index;
+        int bestScore = scores[index];
+
+        for (int j = index + 1; j < numMoves; j++) {
+            if (scores[j] > bestScore) {
+                bestScore = scores[j];
+                bestIdx = j;
+            }
+        }
+
+        if (bestIdx != index) {
+            int tmpMove = moves[index];
+            moves[index] = moves[bestIdx];
+            moves[bestIdx] = tmpMove;
+
+            scores[bestIdx] = scores[index];
+            scores[index] = bestScore;
+        }
+
+        return moves[index];
+    }
+
+    /**
      * Scores and sorts the moves array in-place, placing the most promising moves first.
      * 
      * @param state    Current game state.
@@ -110,41 +159,10 @@ public final class MoveOrderer {
      */
     public void orderMoves(FastState state, int[] moves, int numMoves, int ttMove, int ply) {
         if (numMoves <= 1) return;
-
+        scoreMoves(state, moves, numMoves, ttMove, ply);
         int safePly = Math.min(ply, SearchEngine.MAX_DEPTH - 1);
-        int[] scores = scoreStack[safePly];
-
-        int k1 = killerMoves[safePly][0];
-        int k2 = killerMoves[safePly][1];
-
-        // 1. Assign heuristic priority scores
-        for (int i = 0; i < numMoves; i++) {
-            int move = moves[i];
-            scores[i] = scoreMove(state, move, ttMove, k1, k2);
-        }
-
-        // 2. In-place selection sort (orders highest score first)
         for (int i = 0; i < numMoves - 1; i++) {
-            int bestIdx = i;
-            int bestScore = scores[i];
-
-            for (int j = i + 1; j < numMoves; j++) {
-                if (scores[j] > bestScore) {
-                    bestScore = scores[j];
-                    bestIdx = j;
-                }
-            }
-
-            if (bestIdx != i) {
-                // Swap moves
-                int tmpMove = moves[i];
-                moves[i] = moves[bestIdx];
-                moves[bestIdx] = tmpMove;
-
-                // Swap scores
-                scores[bestIdx] = scores[i];
-                scores[i] = bestScore;
-            }
+            selectBest(moves, numMoves, i, safePly);
         }
     }
 

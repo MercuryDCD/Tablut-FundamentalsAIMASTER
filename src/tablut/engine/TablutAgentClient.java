@@ -24,6 +24,10 @@ public final class TablutAgentClient extends TablutClient {
     private final int timeoutSeconds;
     private final ParallelSearchEngine engine;
     private final FastState fastState;
+    private final long[] gameHistory = new long[300];
+    private int historyCount = 0;
+    private int lastWhiteCount = 8;
+    private int lastBlackCount = 16;
 
     public TablutAgentClient(String role, int timeoutSeconds, String serverIp)
             throws UnknownHostException, IOException {
@@ -97,6 +101,18 @@ public final class TablutAgentClient extends TablutClient {
             State officialState = this.getCurrentState();
             StateAdapter.loadFromState(fastState, officialState);
 
+            // If a capture occurred, clear repetition history to mirror official server drawConditions.clear()
+            if (fastState.whiteCount < lastWhiteCount || fastState.blackCount < lastBlackCount) {
+                historyCount = 0;
+            }
+            lastWhiteCount = fastState.whiteCount;
+            lastBlackCount = fastState.blackCount;
+
+            // Record state hash in match history for 2-fold repetition detection
+            if (historyCount < gameHistory.length) {
+                gameHistory[historyCount++] = fastState.zobristHash;
+            }
+
             State.Turn currentTurn = officialState.getTurn();
 
             // Check game termination outcomes
@@ -135,7 +151,7 @@ public final class TablutAgentClient extends TablutClient {
 
             if (isOurTurn) {
                 int searchBudgetMs = timeoutSeconds * 1000;
-                SearchEngine.SearchResult result = engine.search(fastState, searchBudgetMs);
+                SearchEngine.SearchResult result = engine.search(fastState, searchBudgetMs, gameHistory, historyCount);
 
                 Action action = StateAdapter.toAction(result.bestMove, fastState.turn);
                 System.out.printf("[%s] Move: %s -> %s | %s\n",

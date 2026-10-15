@@ -34,6 +34,8 @@ public final class SearchEngine {
     private boolean useMoveOrdering = true;
     private boolean useQuiescence = true;
     private boolean useHeuristicEvaluation = true;
+    private boolean usePVS = true;
+    private boolean useAspirationWindow = true;
 
     // Parameterized weights for Phase 4 & Phase 5 SPSA tuning
     private HeuristicWeights weights = new HeuristicWeights();
@@ -47,6 +49,12 @@ public final class SearchEngine {
     private long hardDeadlineMs;
     private boolean stopped;
     private long nodesVisited;
+
+    // Ashton Tablut 2-fold repetition tracking & GHI Transposition Safety
+    private long[] gameHistory = null;
+    private int gameHistoryCount = 0;
+    private final long[] searchPath = new long[MAX_DEPTH];
+    private int repetitionEventCounter = 0;
 
     public static final class SearchResult {
         public final int bestMove;
@@ -131,6 +139,22 @@ public final class SearchEngine {
         return useHeuristicEvaluation;
     }
 
+    public void setUsePVS(boolean use) {
+        this.usePVS = use;
+    }
+
+    public boolean isUsePVS() {
+        return usePVS;
+    }
+
+    public void setUseAspirationWindow(boolean use) {
+        this.useAspirationWindow = use;
+    }
+
+    public boolean isUseAspirationWindow() {
+        return useAspirationWindow;
+    }
+
     public TranspositionTable getTranspositionTable() {
         return tt;
     }
@@ -155,6 +179,11 @@ public final class SearchEngine {
         }
     }
 
+    public void setGameHistory(long[] history, int count) {
+        this.gameHistory = history;
+        this.gameHistoryCount = count;
+    }
+
     /**
      * Conducts an Iterative Deepening Search within the allocated time budget.
      * 
@@ -164,6 +193,16 @@ public final class SearchEngine {
      */
     public SearchResult search(FastState rootState, int timeBudgetMs) {
         return search(rootState, timeBudgetMs, MAX_DEPTH);
+    }
+
+    public SearchResult search(FastState rootState, int timeBudgetMs, long[] history, int historyCount) {
+        return search(rootState, timeBudgetMs, MAX_DEPTH, history, historyCount);
+    }
+
+    public SearchResult search(FastState rootState, int timeBudgetMs, int maxDepth, long[] history, int historyCount) {
+        this.gameHistory = history;
+        this.gameHistoryCount = historyCount;
+        return search(rootState, timeBudgetMs, maxDepth);
     }
 
     /**
@@ -180,6 +219,7 @@ public final class SearchEngine {
         this.hardDeadlineMs = startTimeMs + allocatedTimeMs;
         this.stopped = false;
         this.nodesVisited = 0;
+        this.searchPath[0] = rootState.zobristHash;
 
         int searchLimitDepth = Math.min(maxDepth, MAX_DEPTH - 1);
 
@@ -207,6 +247,7 @@ public final class SearchEngine {
             tt.newSearch();
         }
         moveOrderer.clear();
+        this.repetitionEventCounter = 0;
 
         int bestMoveOverall = rootMoves[0];
         int bestScoreOverall = -BaselineEvaluation.INFINITY;
@@ -231,6 +272,13 @@ public final class SearchEngine {
             int alpha = -BaselineEvaluation.INFINITY;
             int beta = BaselineEvaluation.INFINITY;
 
+            // Aspiration Window around bestScoreOverall for depth >= 4
+            int aspirationDelta = 120;
+            if (useAspirationWindow && depth >= 4 && Math.abs(bestScoreOverall) < WIN_THRESHOLD) {
+                alpha = Math.max(-BaselineEvaluation.INFINITY, bestScoreOverall - aspirationDelta);
+                beta = Math.min(BaselineEvaluation.INFINITY, bestScoreOverall + aspirationDelta);
+            }
+
             // Order root moves placing prior best move / TT move first
             int rootTtMove = Move.NULL_MOVE;
             if (useTranspositionTable) {
@@ -245,25 +293,64 @@ public final class SearchEngine {
             UndoInfo undo = undoStack[0];
             boolean depthInterrupted = false;
 
-            for (int i = 0; i < numRootMoves; i++) {
-                int move = rootMoves[i];
-                rootState.makeMove(move, undo);
-                int score = -negamax(rootState, depth - 1, -beta, -alpha, 1);
-                rootState.unmakeMove(move, undo);
+            while (!depthInterrupted) {
+                bestScoreThisDepth = -BaselineEvaluation.INFINITY;
+                bestMoveThisDepth = Move.NULL_MOVE;
+                int currentAlpha = alpha;
 
-                if (stopped) {
-                    depthInterrupted = true;
-                    break;
+                for (int i = 0; i < numRootMoves; i++) {
+                    int move = rootMoves[i];
+                    rootState.makeMove(move, undo);
+
+                    int score;
+                    if (i == 0 || !usePVS) {
+                        score = -negamax(rootState, depth - 1, -beta, -currentAlpha, 1);
+                    } else {
+                        score = -negamax(rootState, depth - 1, -currentAlpha - 1, -currentAlpha, 1);
+                        if (score > currentAlpha && score < beta && !stopped) {
+                            score = -negamax(rootState, depth - 1, -beta, -currentAlpha, 1);
+                        }
+                    }
+
+                    rootState.unmakeMove(move, undo);
+
+                    if (stopped) {
+                        depthInterrupted = true;
+                        break;
+                    }
+
+                    if (score > bestScoreThisDepth) {
+                        bestScoreThisDepth = score;
+                        bestMoveThisDepth = move;
+                    }
+
+                    if (score > currentAlpha) {
+                        currentAlpha = score;
+                    }
+                    if (currentAlpha >= beta) {
+                        break;
+                    }
+
+                    // Early Mate Cutoff: If a guaranteed forced win was discovered, terminate root search immediately
+                    if (bestScoreThisDepth >= WIN_THRESHOLD) {
+                        break;
+                    }
                 }
 
-                if (score > bestScoreThisDepth) {
-                    bestScoreThisDepth = score;
-                    bestMoveThisDepth = move;
+                if (depthInterrupted) break;
+
+                // Check aspiration fail-low or fail-high
+                if (useAspirationWindow && depth >= 4 && (bestScoreThisDepth <= alpha || bestScoreThisDepth >= beta)) {
+                    // Decisive mate cutoff: avoid costly aspiration re-searches if already a proven forced win
+                    if (bestScoreThisDepth >= WIN_THRESHOLD) {
+                        break;
+                    }
+                    alpha = -BaselineEvaluation.INFINITY;
+                    beta = BaselineEvaluation.INFINITY;
+                    continue;
                 }
 
-                if (score > alpha) {
-                    alpha = score;
-                }
+                break;
             }
 
             if (!depthInterrupted) {
@@ -309,6 +396,18 @@ public final class SearchEngine {
             return evaluateTerminal(state, ply);
         }
 
+        // Repetition check: immediate 2-fold draw under Ashton Tablut rules
+        if (ply > 0 && isRepetition(state.zobristHash, ply)) {
+            repetitionEventCounter++;
+            return 0; // Evaluated as draw score in zero-sum Negamax
+        }
+        if (ply < MAX_DEPTH) {
+            searchPath[ply] = state.zobristHash;
+        }
+
+        // Record repetition event counter at node entry to ensure GHI Transposition Safety
+        int repAtEntry = repetitionEventCounter;
+
         // 1. Transposition Table Probe
         int ttMove = Move.NULL_MOVE;
         if (useTranspositionTable) {
@@ -352,9 +451,9 @@ public final class SearchEngine {
             return -BaselineEvaluation.WIN_SCORE + ply;
         }
 
-        // 4. Move Ordering
+        // 4. Move Ordering (Lazy Selection)
         if (useMoveOrdering) {
-            moveOrderer.orderMoves(state, moves, numMoves, ttMove, ply);
+            moveOrderer.scoreMoves(state, moves, numMoves, ttMove, ply);
         }
 
         UndoInfo undo = undoStack[ply];
@@ -363,9 +462,21 @@ public final class SearchEngine {
         int bestMove = Move.NULL_MOVE;
 
         for (int i = 0; i < numMoves; i++) {
-            int move = moves[i];
+            int move = useMoveOrdering ? moveOrderer.selectBest(moves, numMoves, i, ply) : moves[i];
             state.makeMove(move, undo);
-            int score = -negamax(state, depth - 1, -beta, -alpha, ply + 1);
+
+            int score;
+            if (i == 0 || !usePVS) {
+                score = -negamax(state, depth - 1, -beta, -alpha, ply + 1);
+            } else {
+                // Principal Variation Search: probe with null-window scout search
+                score = -negamax(state, depth - 1, -alpha - 1, -alpha, ply + 1);
+                if (score > alpha && score < beta && !stopped) {
+                    // Scout failed high: re-search with full window
+                    score = -negamax(state, depth - 1, -beta, -alpha, ply + 1);
+                }
+            }
+
             state.unmakeMove(move, undo);
 
             if (stopped) {
@@ -381,7 +492,8 @@ public final class SearchEngine {
             }
             if (alpha >= beta) {
                 // Beta cutoff (fail-high)
-                if (useTranspositionTable) {
+                // GHI Transposition Safety: Only record to TT if no path-dependent repetition draw occurred in explored subtree
+                if (useTranspositionTable && repetitionEventCounter == repAtEntry) {
                     tt.record(state.zobristHash, depth, score, TranspositionTable.FLAG_LOWER_BOUND, move, ply);
                 }
 
@@ -400,7 +512,8 @@ public final class SearchEngine {
         }
 
         // 5. Store in Transposition Table
-        if (useTranspositionTable && !stopped) {
+        // GHI Transposition Safety: Only record if no path-dependent repetition draw occurred in explored subtree
+        if (useTranspositionTable && !stopped && repetitionEventCounter == repAtEntry) {
             byte flag = (bestScore > origAlpha) ? TranspositionTable.FLAG_EXACT : TranspositionTable.FLAG_UPPER_BOUND;
             tt.record(state.zobristHash, depth, bestScore, flag, bestMove, ply);
         }
@@ -438,5 +551,26 @@ public final class SearchEngine {
                 break;
             }
         }
+    }
+
+    /**
+     * Checks if the given state hash is a 2-fold repetition against either
+     * the actual game history or earlier states along the current search branch.
+     */
+    private boolean isRepetition(long hash, int ply) {
+        if (gameHistory != null && gameHistoryCount > 0) {
+            for (int i = 0; i < gameHistoryCount; i++) {
+                if (gameHistory[i] == hash) {
+                    return true;
+                }
+            }
+        }
+        int limit = Math.min(ply, MAX_DEPTH);
+        for (int p = 0; p < limit; p++) {
+            if (searchPath[p] == hash) {
+                return true;
+            }
+        }
+        return false;
     }
 }

@@ -26,8 +26,9 @@ public final class QuiescenceSearchTest {
         FastState state = new FastState();
         QuiescenceSearch qs = new QuiescenceSearch();
 
-        int beta = -1000;
-        int alpha = -2000;
+        int staticEval = qs.isUseHeuristicEvaluation() ? HeuristicEvaluation.evaluate(state) : BaselineEvaluation.evaluate(state);
+        int beta = staticEval - 100;
+        int alpha = staticEval - 500;
 
         int score = qs.search(state, alpha, beta, 0, 1);
         if (score < beta) {

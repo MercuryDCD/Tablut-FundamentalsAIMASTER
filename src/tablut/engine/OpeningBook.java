@@ -230,69 +230,137 @@ public final class OpeningBook {
     /**
      * Ingests canonical Ashton Tablut opening lines from tournament theory,
      * past UNIBO champions (brAInmates 2020 1st place, THOR 2020 3rd place),
-     * and historical Tafl strategy (Hnefatafl forum & Galassi 2021).
+     * historical Tafl strategy, and peer-engine empirical benchmark lines.
+     * All lines are automatically expanded 8-fold across all D4 dihedral symmetries.
      */
     private void loadCanonicalOpenings() {
         // Line 1: Standard White flank evacuation (e3 -> d3), Black Rhombus response (e2 -> c2)
-        // White occupies diamond square d3; Black constructs the perimeter Rhombus at c2.
+        // Extended to 6 plies: White occupies diamond d3; Black constructs Rhombus at c2;
+        // White clears e4; Black sets northern Rhombus at g8; King steps to e4; Black clamps b7.
         addLine(new String[] {
-            "e3d3", "e2c2", "e4f4", "e8g8", "e5e4"
+            "e3d3", "e2c2", "e4f4", "e8g8", "e5e4", "b5b7"
+        }, 120);
+
+        // Line 2: Match line vs teammate Luca (Game 1): White e3 -> d3, Black camp pin f1 -> f3
+        // White immediately counters with d5 -> d6; Black responds e8 -> g8; White clears e6 -> g6
+        addLine(new String[] {
+            "e3d3", "f1f3", "d5d6", "e8g8", "e6g6", "b5b7"
+        }, 115);
+
+        // Line 3: Match line vs teammate Luca (Game 2): White e3 -> d3, Black e2 -> c2, White e6 -> f6
+        // Black seals northern Rhombus with e8 -> g8; White advances d5 -> d6; Black clamps b5 -> b7
+        addLine(new String[] {
+            "e3d3", "e2c2", "e6f6", "e8g8", "d5d6", "b5b7"
+        }, 115);
+
+        // Line 4: White e3 -> d3, Black e2 -> c2, White aggressive corridor push c5 -> c7
+        // Black clamps b5 -> b7; White clears e6 -> f6; Black reinforces e8 -> g8
+        addLine(new String[] {
+            "e3d3", "e2c2", "c5c7", "b5b7", "e6f6", "e8g8"
         }, 110);
 
-        // Line 2: White central clearance (e3 -> d3), Black axial reinforcement (e8 -> e7)
+        // Line 5: White e3 -> d3, Black e2 -> c2, White diamond advancement d5 -> d6
+        // Black establishes west Rhombus b5 -> b7; White opens c5 -> c7; Black balances e8 -> g8
         addLine(new String[] {
-            "e3d3", "e8e7", "e4e3", "b5c5", "e5e4"
-        }, 100);
+            "e3d3", "e2c2", "d5d6", "b5b7", "c5c7", "e8g8"
+        }, 110);
 
-        // Line 3: White northern lateral release (e7 -> f7), Black Rhombus response (e8 -> g8)
-        // White occupies diamond f7; Black establishes northern corner blockade at g8.
+        // Line 6: White e3 -> d3, Black conservative camp step d1 -> d2
+        // White opens d5 -> d6; Black anchors e8 -> g8; White opens c5 -> c7; Black clamps b5 -> b7
         addLine(new String[] {
-            "e7f7", "e8g8", "e6d6", "e2c2", "e5e6"
+            "e3d3", "d1d2", "d5d6", "e8g8", "c5c7", "b5b7"
         }, 105);
 
-        // Line 4: White symmetric northern release (e7 -> f7), Black southern axis (e2 -> e3)
+        // Line 7: White e3 -> d3, Black early flank clamp b5 -> b7
+        // White counters with d5 -> d6; Black sets southern Rhombus e2 -> c2; White clears e6 -> g6
         addLine(new String[] {
-            "e7f7", "e2e3", "e6e7", "h5g5", "e5e6"
+            "e3d3", "b5b7", "d5d6", "e2c2", "e6g6", "e8g8"
+        }, 105);
+
+        // Line 8: White e3 -> d3, Black early flank clamp h5 -> h3
+        // White counters with d5 -> d6; Black sets southern Rhombus e2 -> c2; White clears e6 -> f6
+        addLine(new String[] {
+            "e3d3", "h5h3", "d5d6", "e2c2", "e6f6", "e8g8"
+        }, 105);
+
+        // Line 9: White central clearance (e3 -> d3), Black axial reinforcement (e8 -> e7)
+        addLine(new String[] {
+            "e3d3", "e8e7", "e4e3", "b5c5", "e5e4", "e2e3"
+        }, 100);
+
+        // Line 10: White northern lateral release (e7 -> f7), Black Rhombus response (e8 -> g8)
+        addLine(new String[] {
+            "e7f7", "e8g8", "e6d6", "e2c2", "e5e6", "b5b7"
+        }, 110);
+
+        // Line 11: White symmetric northern release (e7 -> f7), Black southern axis (e2 -> e3)
+        addLine(new String[] {
+            "e7f7", "e2e3", "e6e7", "h5g5", "e5e6", "e8g8"
         }, 95);
 
-        // Line 5: White west cross clearance (c5 -> c4), Black Rhombus flank containment (b5 -> b7)
+        // Line 12: White northern flank clearance (e7 -> d7), Black Rhombus response (e8 -> g8)
         addLine(new String[] {
-            "c5c4", "b5b7", "d5d6", "e2c2", "e5d5"
+            "e7d7", "e8g8", "e6d6", "e2c2", "e5e6", "b5b7"
+        }, 110);
+
+        // Line 13: White northern flank clearance (e7 -> d7), Black southern axis (e2 -> e3)
+        addLine(new String[] {
+            "e7d7", "e2e3", "e6e7", "a5b5", "e5e6", "e8g8"
+        }, 95);
+
+        // Line 14: White west cross clearance (c5 -> c4), Black Rhombus flank containment (b5 -> b7)
+        addLine(new String[] {
+            "c5c4", "b5b7", "d5d6", "e2c2", "e5d5", "e8g8"
+        }, 105);
+
+        // Line 15: White west cross corridor push (c5 -> c7), Black Rhombus clamp (b5 -> b7)
+        addLine(new String[] {
+            "c5c7", "b5b7", "e7f7", "e2c2", "d5d6", "e8g8"
+        }, 105);
+
+        // Line 16: White south-west cross clearance (c5 -> c3), Black containment (b5 -> b3)
+        addLine(new String[] {
+            "c5c3", "b5b3", "e3d3", "e8g8", "d5d4"
         }, 100);
 
-        // Line 6: White east cross clearance (g5 -> g6), Black Rhombus flank containment (h5 -> h3)
+        // Line 17: White east cross clearance (g5 -> g6), Black Rhombus flank containment (h5 -> h3)
         addLine(new String[] {
-            "g5g6", "h5h3", "f5f4", "e8g8", "e5f5"
+            "g5g6", "h5h3", "f5f4", "e8g8", "e5f5", "b5b7"
+        }, 105);
+
+        // Line 18: White east cross corridor push (g5 -> g7), Black Rhombus clamp (h5 -> h7)
+        addLine(new String[] {
+            "g5g7", "h5h7", "e7d7", "e2c2", "f5f6", "e8g8"
+        }, 105);
+
+        // Line 19: White south-east cross clearance (g5 -> g3), Black containment (h5 -> h3)
+        addLine(new String[] {
+            "g5g3", "h5h3", "e3f3", "e8g8", "f5f4"
         }, 100);
 
-        // Line 7: White diamond construction d5 -> d6, Black perimeter clamp a4 -> b4
+        // Line 20: White diamond construction d5 -> d6, Black perimeter clamp a4 -> b4
         addLine(new String[] {
             "d5d6", "a4b4", "e3d3", "e8g8", "e5d5"
         }, 95);
 
-        // Line 8: White diamond construction f5 -> f4, Black perimeter clamp i6 -> h6
+        // Line 21: White diamond construction f5 -> f4, Black perimeter clamp i6 -> h6
         addLine(new String[] {
             "f5f4", "i6h6", "e7f7", "e2c2", "e5f5"
         }, 95);
 
-        // Line 9: White horizontal clearance c5 -> c4, Black western blockade a4 -> b4
+        // Line 22: White horizontal clearance c5 -> c4, Black western blockade a4 -> b4
         addLine(new String[] {
             "c5c4", "a4b4", "d5c5", "e9e8", "e5d5"
         }, 90);
 
-        // Line 10: White east clearance g5 -> g6, Black eastern clamp i6 -> h6
+        // Line 23: White east clearance g5 -> g6, Black eastern clamp i6 -> h6
         addLine(new String[] {
             "g5g6", "i6h6", "f5g5", "d1d2", "e5f5"
         }, 90);
 
-        // Line 11: Classic defensive clearance e3 -> f3, Black response e8 -> e7
+        // Line 24: Classic defensive clearance e3 -> f3, Black response e8 -> e7
         addLine(new String[] {
             "e3f3", "e8e7", "e4e3", "h5g5", "e5e4"
-        }, 90);
-
-        // Line 12: Classic defensive clearance e7 -> d7, Black response e2 -> e3
-        addLine(new String[] {
-            "e7d7", "e2e3", "e6e7", "a5b5", "e5e6"
         }, 90);
     }
 }

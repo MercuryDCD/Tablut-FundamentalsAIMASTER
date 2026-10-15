@@ -48,13 +48,11 @@ public final class TranspositionTable {
     private final int size;
     private final int mask;
 
-    // Parallel primitive flat arrays (zero GC pressure, high cache locality)
-    private final long[] tableKeys;
-    private final int[] tableScores;
-    private final int[] tableMoves;
-    private final byte[] tableDepths;
-    private final byte[] tableFlags;
-    private final byte[] tableAges;
+    // Two parallel 64-bit primitive flat arrays (Hyatt Lockless XOR layout):
+    // tableData[i]:  64-bit packed entry (score:24, move:16, depth:8, flag:8, age:8)
+    // tableLocks[i]: zobristHash ^ tableData[i] (lockless verification preventing torn reads)
+    private final long[] tableLocks;
+    private final long[] tableData;
 
     private byte currentAge = 0;
 
@@ -74,24 +72,16 @@ public final class TranspositionTable {
         this.size = 1 << sizeBits;
         this.mask = this.size - 1;
 
-        this.tableKeys = new long[this.size];
-        this.tableScores = new int[this.size];
-        this.tableMoves = new int[this.size];
-        this.tableDepths = new byte[this.size];
-        this.tableFlags = new byte[this.size];
-        this.tableAges = new byte[this.size];
+        this.tableLocks = new long[this.size];
+        this.tableData = new long[this.size];
     }
 
     /**
      * Clears all entries in the transposition table.
      */
     public void clear() {
-        Arrays.fill(tableKeys, 0L);
-        Arrays.fill(tableScores, 0);
-        Arrays.fill(tableMoves, 0);
-        Arrays.fill(tableDepths, (byte) 0);
-        Arrays.fill(tableFlags, FLAG_NONE);
-        Arrays.fill(tableAges, (byte) 0);
+        Arrays.fill(tableLocks, 0L);
+        Arrays.fill(tableData, 0L);
         this.hits.reset();
         this.misses.reset();
         this.cutoffs.reset();
@@ -107,13 +97,18 @@ public final class TranspositionTable {
 
     /**
      * Probes the table for a recorded entry matching the given Zobrist hash.
+     * Uses Bob Hyatt's Lockless XOR Hash Verification:
+     * Any torn read between concurrent worker threads corrupts (lock ^ data)
+     * and cleanly degrades to a safe cache miss with zero locking overhead.
      * 
      * @param zobristHash 64-bit state hash
-     * @return index in parallel arrays if key matches, or -1 if miss/collision
+     * @return index in arrays if key matches, or -1 if miss/collision
      */
     public int probe(long zobristHash) {
         int index = (int) (zobristHash & mask);
-        if (tableKeys[index] == zobristHash && tableFlags[index] != FLAG_NONE) {
+        long data = tableData[index];
+        long lock = tableLocks[index];
+        if ((lock ^ data) == zobristHash && unpackFlag(data) != FLAG_NONE) {
             hits.increment();
             return index;
         }
@@ -130,56 +125,92 @@ public final class TranspositionTable {
      * 3. If collision with different position: replace if old entry is from a previous search
      *    age (stale) or if new search depth >= old search depth (depth-preferred).
      *
-     * Lazy SMP Concurrency Note:
-     * Payload fields (depth, flag, score, move, age) are written BEFORE tableKeys[index].
-     * Probing threads verifying tableKeys[index] == zobristHash only observe the match
-     * after the payload has been committed, preventing torn reads under lockless shared access.
+     * Bob Hyatt's Lockless XOR Concurrency:
+     * The payload is packed into a single 64-bit primitive long, and the lock key is
+     * computed as zobristHash ^ newData. tableData[index] is updated followed by tableLocks[index].
+     * Any reader observing an inconsistent/intermediate write will fail the XOR test and miss safely.
      */
     public void record(long zobristHash, int depth, int score, byte flag, int bestMove, int ply) {
         int index = (int) (zobristHash & mask);
 
-        boolean isOldSameKey = (tableKeys[index] == zobristHash && tableFlags[index] != FLAG_NONE);
-        boolean isStale = (tableAges[index] != currentAge);
-        boolean isDeeperOrEqual = (depth >= (tableDepths[index] & 0xFF));
+        long oldData = tableData[index];
+        long oldLock = tableLocks[index];
+        boolean isOldSameKey = ((oldLock ^ oldData) == zobristHash && unpackFlag(oldData) != FLAG_NONE);
 
-        boolean shouldReplace = (tableFlags[index] == FLAG_NONE)
+        byte oldAge = unpackAge(oldData);
+        int oldDepth = unpackDepth(oldData);
+
+        boolean isStale = (oldAge != currentAge);
+        boolean isDeeperOrEqual = (depth >= oldDepth);
+
+        boolean shouldReplace = (unpackFlag(oldData) == FLAG_NONE)
                 || (isOldSameKey && (isDeeperOrEqual || isStale))
                 || (!isOldSameKey && (isStale || isDeeperOrEqual));
 
         if (shouldReplace) {
-            tableDepths[index] = (byte) depth;
-            tableFlags[index] = flag;
-            tableAges[index] = currentAge;
-
-            // Preserve bestMove if new move is null and previous move was valid for same key
-            if (bestMove != NO_MOVE) {
-                tableMoves[index] = bestMove;
-            } else if (!isOldSameKey) {
-                tableMoves[index] = NO_MOVE;
+            int move = bestMove;
+            if (move == NO_MOVE && isOldSameKey) {
+                move = unpackMove(oldData);
             }
 
-            // Normalize terminal score to be ply-independent
-            tableScores[index] = scoreToTt(score, ply);
+            int ttScore = scoreToTt(score, ply);
+            long newData = packData(ttScore, move, depth, flag, currentAge);
+            long newLock = zobristHash ^ newData;
 
-            // Key published last for lockless reader consistency
-            tableKeys[index] = zobristHash;
+            tableData[index] = newData;
+            tableLocks[index] = newLock;
         }
     }
 
     public int getBestMove(int index) {
-        return tableMoves[index];
+        return unpackMove(tableData[index]);
     }
 
     public int getDepth(int index) {
-        return tableDepths[index] & 0xFF;
+        return unpackDepth(tableData[index]);
     }
 
     public byte getFlag(int index) {
-        return tableFlags[index];
+        return unpackFlag(tableData[index]);
     }
 
     public int getScore(int index, int ply) {
-        return scoreFromTt(tableScores[index], ply);
+        return scoreFromTt(unpackScore(tableData[index]), ply);
+    }
+
+    // --- Hyatt 64-bit Bitwise Packing Utilities ---
+
+    public static long packData(int score, int move, int depth, byte flag, byte age) {
+        long s = ((long) score) & 0xFFFFFFL;
+        long m = ((long) move) & 0xFFFFL;
+        long d = ((long) depth) & 0xFFL;
+        long f = ((long) flag) & 0xFFL;
+        long a = ((long) age) & 0xFFL;
+        return s | (m << 24) | (d << 40) | (f << 48) | (a << 56);
+    }
+
+    public static int unpackScore(long data) {
+        int s = (int) (data & 0xFFFFFFL);
+        if ((s & 0x800000) != 0) {
+            s |= 0xFF000000; // Sign-extend 24-bit two's-complement
+        }
+        return s;
+    }
+
+    public static int unpackMove(long data) {
+        return (int) ((data >>> 24) & 0xFFFFL);
+    }
+
+    public static int unpackDepth(long data) {
+        return (int) ((data >>> 40) & 0xFFL);
+    }
+
+    public static byte unpackFlag(long data) {
+        return (byte) ((data >>> 48) & 0xFFL);
+    }
+
+    public static byte unpackAge(long data) {
+        return (byte) ((data >>> 56) & 0xFFL);
     }
 
     public void recordCutoff() {

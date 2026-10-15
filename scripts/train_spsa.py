@@ -46,6 +46,8 @@ WEIGHT_NAMES = [
     "kingSurroundedThrone",      # 12: Bonus per hostile piece directly adjacent to King
     "kingContainment",           # 13: Bonus for keeping King contained near central Throne
     "blackMobility",             # 14: Mobility bonus for active Black soldiers
+    "blackConnectedChains",      # 15: Bonus for connected blockade chains (orthogonal & diagonal links)
+    "kingOpenFieldContainment",  # 16: Bonus for swarming escaping King in open field (distFromCenter >= 2)
 ]
 
 DEFAULT_WEIGHTS = [
@@ -63,7 +65,9 @@ DEFAULT_WEIGHTS = [
     60,     # campFrontPreserved
     280,    # kingSurroundedThrone
     35,     # kingContainment
-    5       # blackMobility
+    5,      # blackMobility
+    20,     # blackConnectedChains
+    18      # kingOpenFieldContainment
 ]
 
 BOUNDS = [
@@ -82,6 +86,8 @@ BOUNDS = [
     (50, 800),      # kingSurroundedThrone
     (5, 150),       # kingContainment
     (1, 30),        # blackMobility
+    (0, 100),       # blackConnectedChains
+    (0, 80),        # kingOpenFieldContainment
 ]
 
 # Scale factor for exploration step Delta per weight index
@@ -100,8 +106,34 @@ SCALES = [
     8.0,    # campFrontPreserved
     20.0,   # kingSurroundedThrone
     4.0,    # kingContainment
-    1.0     # blackMobility
+    1.0,    # blackMobility
+    4.0,    # blackConnectedChains
+    3.0     # kingOpenFieldContainment
 ]
+
+# Curriculum Training Stages (Block Coordinate SPSA)
+STAGES = {
+    "material": {
+        "name": "Stage 1: Material Balance & King Escapes",
+        "description": "Macro-tactical balance (White/Black soldiers, single & double escape threats)",
+        "indices": [0, 1, 3, 4, 8, 9]  # whitePiece, blackCaptured, kingSingleEscape, kingDoubleEscape, blackPiece, whiteCaptured
+    },
+    "positional": {
+        "name": "Stage 2: Positional Structures & Territorial Control",
+        "description": "Rhombus blockade, camp doors preservation, diamond formation, throne encirclement & containment, connected chains, open field swarming",
+        "indices": [5, 10, 11, 12, 13, 15, 16]  # diamondOccupancy, rhombusBlockade, campFrontPreserved, kingSurroundedThrone, kingContainment, blackConnectedChains, kingOpenFieldContainment
+    },
+    "micro": {
+        "name": "Stage 3: Micro-Heuristics & Dynamic Mobility",
+        "description": "King distance, king & black mobility, king vulnerability penalty",
+        "indices": [2, 6, 7, 14]  # kingDistance, kingMobility, kingVulnerabilityPenalty, blackMobility
+    },
+    "all": {
+        "name": "Stage 4: Joint Fine-Tuning (All 17 Parameters)",
+        "description": "Full simultaneous perturbation across all 17 heuristic parameters",
+        "indices": list(range(len(WEIGHT_NAMES)))
+    }
+}
 
 CHECKPOINT_FILE = Path("checkpoint_weights.json")
 
@@ -114,12 +146,14 @@ def clamp_weights(w_vec):
 def weights_to_csv(w_vec):
     return ",".join(str(int(round(x))) for x in w_vec)
 
-def save_checkpoint(iteration, total_games, active_w, best_w, winrate_plus, depth, threads, elapsed_sec):
+def save_checkpoint(iteration, total_games, active_w, best_w, winrate_plus, depth, threads, elapsed_sec, stage="all", cycle=1):
     checkpoint_data = {
         "iteration": iteration,
         "total_games": total_games,
         "elapsed_seconds": int(elapsed_sec),
         "timestamp": datetime.datetime.now().isoformat(),
+        "stage": stage,
+        "cycle": cycle,
         "depth": depth,
         "threads": threads,
         "active_weights": [int(round(x)) for x in active_w],
@@ -173,13 +207,23 @@ def run_headless_match(weights_a_csv, weights_b_csv, games, threads, depth, clas
 
 def main():
     parser = argparse.ArgumentParser(description="Anytime Continuous SPSA Optimizer for Tablut AI Agent")
-    parser.add_argument("--games", type=int, default=40, help="Matches per SPSA iteration (default: 40)")
+    parser.add_argument("--curriculum", action="store_true",
+                        help="Run automated cyclical curriculum mode (rotates material -> positional -> micro -> all)")
+    parser.add_argument("--iters-per-stage", type=int, default=100,
+                        help="Number of iterations before auto-rotating to next stage in curriculum mode (default: 100)")
+    parser.add_argument("--stage", type=str, choices=list(STAGES.keys()), default="all",
+                        help="Manual stage selection when not using --curriculum (default: all)")
+    parser.add_argument("--games", type=int, default=60, help="Matches per SPSA iteration (default: 60)")
     parser.add_argument("--threads", type=int, default=os.cpu_count() or 4, help="Worker threads for simulation")
     parser.add_argument("--depth", type=int, default=3, help="Search depth per move (default: 3)")
     parser.add_argument("--resume", action="store_true", help="Resume from checkpoint_weights.json if present")
     parser.add_argument("--max-iterations", type=int, default=0, help="Stop after N iterations (0 = infinite anytime)")
     parser.add_argument("--learning-rate", type=float, default=8.0, help="SPSA learning rate parameter 'a' (default: 8.0)")
     parser.add_argument("--perturbation", type=float, default=1.0, help="SPSA perturbation step parameter 'c' (default: 1.0)")
+    parser.add_argument("--warm-restart", action="store_true",
+                        help="Reset SPSA learning rate decay (a_k, c_k) to step 1 for the current session (recommended when resuming a new stage or changing depth)")
+    parser.add_argument("--auto-apply", action="store_true",
+                        help="Automatically apply best weights and recompile engine binaries upon stopping/completion")
     args = parser.parse_args()
 
     # Ensure even number of games for color balance
@@ -196,32 +240,60 @@ def main():
     start_iteration = 0
     total_games = 0
     total_time_start = time.time()
+    resumed_cycle = 1
 
     if args.resume:
         ckpt = load_checkpoint()
         if ckpt:
-            active_w = [float(x) for x in ckpt["active_weights"]]
-            best_w = [float(x) for x in ckpt["best_weights"]]
+            loaded_active = [float(x) for x in ckpt.get("active_weights", [])]
+            loaded_best = [float(x) for x in ckpt.get("best_weights", [])]
+            while len(loaded_active) < len(DEFAULT_WEIGHTS):
+                loaded_active.append(float(DEFAULT_WEIGHTS[len(loaded_active)]))
+            while len(loaded_best) < len(DEFAULT_WEIGHTS):
+                loaded_best.append(float(DEFAULT_WEIGHTS[len(loaded_best)]))
+            active_w = loaded_active[:len(DEFAULT_WEIGHTS)]
+            best_w = loaded_best[:len(DEFAULT_WEIGHTS)]
+
+            if "active_weights_dict" in ckpt:
+                for i, name in enumerate(WEIGHT_NAMES):
+                    if name in ckpt["active_weights_dict"]:
+                        active_w[i] = float(ckpt["active_weights_dict"][name])
+            if "best_weights_dict" in ckpt:
+                for i, name in enumerate(WEIGHT_NAMES):
+                    if name in ckpt["best_weights_dict"]:
+                        best_w[i] = float(ckpt["best_weights_dict"][name])
+
             start_iteration = ckpt.get("iteration", 0)
             total_games = ckpt.get("total_games", 0)
-            print(f"[*] Resumed from checkpoint: Iteration {start_iteration}, {total_games} total games.")
+            prev_stage = ckpt.get("stage", "all")
+            resumed_cycle = ckpt.get("cycle", 1)
+            print(f"[*] Resumed from checkpoint (Previous stage: {prev_stage}, Cycle: {resumed_cycle}): Iteration {start_iteration}, {total_games} total games.")
 
     # Graceful SIGINT handler
     interrupted = False
     def handle_sigint(signum, frame):
         nonlocal interrupted
         interrupted = True
-        print("\n[!] Ctrl+C detected. Gracefully flushing checkpoint and exiting...")
+        print("\n[!] Ctrl+C detected. Gracefully finishing current match, flushing checkpoint and exiting...")
     signal.signal(signal.SIGINT, handle_sigint)
 
+    CURRICULUM_CYCLE = ["material", "positional", "micro", "all"]
+
     print("=" * 80)
-    print("  TABLUT HEURISTIC OPTIMIZER — ANYTIME CONTINUOUS SPSA PIPELINE")
+    print("  TABLUT HEURISTIC OPTIMIZER — ANYTIME SPSA PIPELINE")
     print("=" * 80)
+    if args.curriculum:
+        print(f"  Mode           : Automated Cyclical Curriculum")
+        print(f"  Stage Sequence : {' -> '.join(CURRICULUM_CYCLE)} (Cycling every {args.iters_per_stage} iters)")
+    else:
+        print(f"  Mode           : Single Stage [{args.stage}]")
+        print(f"  Stage Info     : {STAGES[args.stage]['name']}")
     print(f"  Worker Threads : {args.threads}")
     print(f"  Search Depth   : Depth {args.depth} + Quiescence Search")
     print(f"  Games / Step   : {args.games} (Strict Color-Balanced Alternation)")
     print(f"  Start Iteration: {start_iteration + 1}")
     print(f"  Checkpoint File: {CHECKPOINT_FILE.resolve()}")
+    print(f"  Auto-Apply     : {'Enabled (will patch HeuristicWeights.java & recompile)' if args.auto_apply else 'Disabled'}")
     print("  Press Ctrl+C at any time to safely terminate and retain all progress.")
     print("-" * 80)
 
@@ -232,21 +304,47 @@ def main():
     a = args.learning_rate
     c = args.perturbation
 
+    current_stage = None
+    current_cycle = resumed_cycle
+    active_indices = set()
+
     iteration = start_iteration
     while not interrupted:
         iteration += 1
         iter_start_time = time.time()
 
-        # 1. Compute decaying step sizes
-        a_k = a / ((iteration + A) ** alpha)
-        c_k = c / (iteration ** gamma)
+        # Determine stage and cycle
+        if args.curriculum:
+            stage_idx = ((iteration - 1) // args.iters_per_stage) % len(CURRICULUM_CYCLE)
+            current_cycle = ((iteration - 1) // (args.iters_per_stage * len(CURRICULUM_CYCLE))) + 1
+            stage_key = CURRICULUM_CYCLE[stage_idx]
+        else:
+            stage_key = args.stage
+            current_cycle = 1
 
-        # 2. Generate random Bernoulli perturbation direction Delta_k in {-1, +1}^15
-        delta = [random.choice([-1.0, 1.0]) for _ in range(len(active_w))]
+        if stage_key != current_stage:
+            current_stage = stage_key
+            stage_info = STAGES[current_stage]
+            active_indices = set(stage_info["indices"])
+            print("\n" + "=" * 80)
+            print(f"  >>> STAGE TRANSITION: Cycle {current_cycle} | {stage_info['name']}")
+            print(f"      Description: {stage_info['description']}")
+            print(f"      Active parameters ({len(active_indices)}/{len(WEIGHT_NAMES)}): {', '.join(WEIGHT_NAMES[i] for i in sorted(active_indices))}")
+            print("=" * 80 + "\n")
 
-        # 3. Create perturbed vectors w+ and w-
-        w_plus = [active_w[i] + c_k * SCALES[i] * delta[i] for i in range(len(active_w))]
-        w_minus = [active_w[i] - c_k * SCALES[i] * delta[i] for i in range(len(active_w))]
+        # 1. Compute decaying step sizes (support warm-restart for new stage / depth exploration)
+        step_k = (iteration - start_iteration) if args.warm_restart else iteration
+        a_k = a / ((step_k + A) ** alpha)
+        c_k = c / (step_k ** gamma)
+
+        # 2. Generate random Bernoulli perturbation direction Delta_k for active indices only
+        delta = [0.0] * len(active_w)
+        for i in active_indices:
+            delta[i] = random.choice([-1.0, 1.0])
+
+        # 3. Create perturbed vectors w+ and w- (frozen parameters remain untouched)
+        w_plus = [active_w[i] + (c_k * SCALES[i] * delta[i] if i in active_indices else 0.0) for i in range(len(active_w))]
+        w_minus = [active_w[i] - (c_k * SCALES[i] * delta[i] if i in active_indices else 0.0) for i in range(len(active_w))]
 
         w_plus_clamped = clamp_weights(w_plus)
         w_minus_clamped = clamp_weights(w_minus)
@@ -264,16 +362,12 @@ def main():
         total_games += args.games
 
         # 5. Gradient estimation: g_k = (y+ - y-) / (2 * c_k * Delta)
-        # In multi-dimensional SPSA: g_i = (y+ - y-) / (2 * c_k * SCALES_i * delta_i)
-        grad = []
+        # Update strictly the active parameters of the selected curriculum stage
         for i in range(len(active_w)):
-            denominator = 2.0 * c_k * SCALES[i] * delta[i]
-            g_i = (y_plus - y_minus) / denominator
-            grad.append(g_i)
-
-        # 6. Parameter update: w_{k+1} = clamp(w_k + a_k * g_i * SCALES_i^2)
-        for i in range(len(active_w)):
-            active_w[i] += a_k * grad[i] * (SCALES[i] ** 2)
+            if i in active_indices:
+                denominator = 2.0 * c_k * SCALES[i] * delta[i]
+                g_i = (y_plus - y_minus) / denominator
+                active_w[i] += a_k * g_i * (SCALES[i] ** 2)
         active_w = clamp_weights(active_w)
 
         # Track best weights if winrate of candidate was strong
@@ -286,32 +380,47 @@ def main():
         total_elapsed = time.time() - total_time_start
         speed = args.games / iter_elapsed
 
-        # 7. Atomic Checkpoint
-        save_checkpoint(iteration, total_games, active_w, best_w, y_plus, args.depth, args.threads, total_elapsed)
+        # 6. Atomic Checkpoint
+        save_checkpoint(iteration, total_games, active_w, best_w, y_plus, args.depth, args.threads,
+                        total_elapsed, stage=current_stage, cycle=current_cycle)
 
-        # 8. Real-time telemetry log
+        # 7. Real-time telemetry log
         diff_str = []
-        for i in [0, 2, 7, 8, 9, 10]: # Log key salient features
+        log_indices = sorted(active_indices) if len(active_indices) <= 6 else [0, 2, 7, 8, 9, 10]
+        for i in log_indices:
             diff = int(round(active_w[i])) - DEFAULT_WEIGHTS[i]
             sign = "+" if diff >= 0 else ""
             diff_str.append(f"{WEIGHT_NAMES[i]}={int(round(active_w[i]))}({sign}{diff})")
 
-        print(f"[Iter {iteration:4d}] Games: {total_games:6d} | WinRate(+): {y_plus*100:5.1f}% | "
+        print(f"[Iter {iteration:4d} | C{current_cycle}:{current_stage:<10}] Games: {total_games:6d} | WinRate(+): {y_plus*100:5.1f}% | "
               f"a_k: {a_k:5.2f} | Speed: {speed:5.1f} g/s | Elapsed: {int(total_elapsed)}s")
-        print(f"         Key Weights: {', '.join(diff_str)}")
+        print(f"         Active Weights: {', '.join(diff_str)}")
 
-        if args.max_iterations > 0 and iteration >= args.max_iterations:
-            print(f"\n[+] Reached target iteration limit ({args.max_iterations}). Optimization complete.")
+        session_iter = iteration - start_iteration
+        if args.max_iterations > 0 and session_iter >= args.max_iterations:
+            print(f"\n[+] Reached session iteration limit ({args.max_iterations} iters, global: {iteration}). Optimization complete.")
             break
 
     # Final summary
     print("\n" + "=" * 80)
     print("  OPTIMIZATION SESSION COMPLETED")
     print("=" * 80)
+    print(f"  Total Cycles     : {current_cycle}")
+    print(f"  Last Stage       : {current_stage}")
     print(f"  Total Iterations : {iteration}")
     print(f"  Total Games      : {total_games}")
     print(f"  Best Weights Checkpoint: {CHECKPOINT_FILE.resolve()}")
     print("=" * 80)
+
+    # Auto-apply if requested
+    if args.auto_apply:
+        print("\n[*] Auto-apply enabled: Ingesting best weights into HeuristicWeights.java and recompiling...")
+        apply_script = Path(__file__).parent / "apply_weights.py"
+        res = subprocess.run([sys.executable, str(apply_script)])
+        if res.returncode == 0:
+            print("[+] Successfully updated HeuristicWeights.java and recompiled engine binaries.")
+        else:
+            print("[!] Warning: Auto-apply failed. Check logs above.", file=sys.stderr)
 
 if __name__ == "__main__":
     main()

@@ -25,6 +25,7 @@ garbage/
 *.log
 *.tmp
 __AGENT_CACHE__*.txt
+team/
 
 # Eclipse IDE
 .metadata

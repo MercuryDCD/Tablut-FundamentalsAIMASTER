@@ -38,6 +38,10 @@ public final class BoardConstants {
     // if the King reaches row 0, row 8, col 0, or col 8, White wins.
     public static final boolean[] IS_WIN_SQUARE_FOR_KING = new boolean[NUM_SQUARES];
 
+    // Precomputed minimum Manhattan distance from each square to the nearest true escape/win square (20 exits).
+    // Eliminates the "ghost escape" bug where naive edge distance pulled the King toward citadels (teammate Luca's LaneCheck).
+    public static final byte[] MIN_DISTANCE_TO_ESCAPE = new byte[NUM_SQUARES];
+
     static {
         // Initialize names and default IDs
         for (int r = 0; r < 9; r++) {
@@ -105,6 +109,22 @@ public final class BoardConstants {
             if ((r == 0 || r == 8 || c == 0 || c == 8) && !IS_CAMP[sq]) {
                 IS_WIN_SQUARE_FOR_KING[sq] = true;
             }
+        }
+
+        // Precompute true distance to nearest 20 win squares
+        for (int sq = 0; sq < NUM_SQUARES; sq++) {
+            int r = row(sq);
+            int c = col(sq);
+            int minDist = 99;
+            for (int winSq = 0; winSq < NUM_SQUARES; winSq++) {
+                if (IS_WIN_SQUARE_FOR_KING[winSq]) {
+                    int d = Math.abs(r - row(winSq)) + Math.abs(c - col(winSq));
+                    if (d < minDist) {
+                        minDist = d;
+                    }
+                }
+            }
+            MIN_DISTANCE_TO_ESCAPE[sq] = (byte) minDist;
         }
 
         // 3. Camp Anvils:

@@ -90,7 +90,79 @@ public final class BlackHeuristics {
             score += containment * weights.kingContainment;
         }
 
+        // 6. Connected Blockade Chains (Orthogonal & Diagonal Soldier Links)
+        int connectedChains = countConnectedChains(state);
+        score += connectedChains * weights.blackConnectedChains;
+
+        // 7. Active Black Mobility
+        if (weights.blackMobility > 0) {
+            int mobility = computeBlackMobility(state);
+            score += mobility * weights.blackMobility;
+        }
+
+        // 8. Open-Field King Strangling (Active when King leaves central 3x3 region)
+        if (distFromCenter >= 2 && weights.kingOpenFieldContainment > 0) {
+            int openFieldSwarm = computeOpenFieldContainment(state, kRow, kCol);
+            score += openFieldSwarm * weights.kingOpenFieldContainment;
+        }
+
         return score;
+    }
+
+    /**
+     * Measures the swarm pressure of Black soldiers around an escaping King in the open field.
+     * Active only when the King has evacuated the central region (distFromCenter >= 2).
+     * For every Black soldier within 4 Manhattan steps of the King, adds (5 - dist).
+     * Provides a continuous gradient guiding Black pieces to converge and execute custodian captures.
+     */
+    public static int computeOpenFieldContainment(FastState state, int kRow, int kCol) {
+        int containment = 0;
+        byte[] board = state.board;
+        for (int sq = 0; sq < BoardConstants.NUM_SQUARES; sq++) {
+            if (board[sq] == BoardConstants.BLACK) {
+                int r = BoardConstants.row(sq);
+                int c = BoardConstants.col(sq);
+                int dist = Math.abs(r - kRow) + Math.abs(c - kCol);
+                if (dist <= 4) {
+                    containment += (5 - dist);
+                }
+            }
+        }
+        return containment;
+    }
+
+    /**
+     * Measures the structural density of Black's containment perimeter.
+     * Counts pairs of adjacent Black soldiers (both orthogonal and diagonal connections).
+     * Connected chains form impenetrable walls that prevent the King from slipping past.
+     * To avoid double counting, each connection is counted only from the piece with smaller coordinate.
+     */
+    public static int countConnectedChains(FastState state) {
+        int connections = 0;
+        for (int r = 0; r < 9; r++) {
+            for (int c = 0; c < 9; c++) {
+                int sq = BoardConstants.coord(r, c);
+                if (state.board[sq] == BoardConstants.BLACK) {
+                    // Check East (orthogonal)
+                    if (c + 1 < 9 && state.board[sq + 1] == BoardConstants.BLACK) {
+                        connections++;
+                    }
+                    // Check North (orthogonal)
+                    if (r + 1 < 9 && state.board[sq + 9] == BoardConstants.BLACK) {
+                        connections++;
+                    }
+                    // Check North-East (diagonal)
+                    if (r + 1 < 9 && c + 1 < 9 && state.board[sq + 10] == BoardConstants.BLACK) {
+                        connections++;
+                    }
+                    // Check North-West (diagonal)
+                    if (r + 1 < 9 && c - 1 >= 0 && state.board[sq + 8] == BoardConstants.BLACK) {
+                        connections++;
+                    }
+                }
+            }
+        }
+        return connections;
     }
 
     /**
@@ -153,12 +225,57 @@ public final class BlackHeuristics {
 
         // 3. King in open field (custodian capture: 2 flankers or 1 flanker + anvil)
         int attackers = 0;
-        if (kCol + 1 < 9 && state.board[kSq + FastState.DIR_EAST] == BoardConstants.BLACK) attackers++;
-        if (kCol - 1 >= 0 && state.board[kSq + FastState.DIR_WEST] == BoardConstants.BLACK) attackers++;
-        if (kRow + 1 < 9 && state.board[kSq + FastState.DIR_NORTH] == BoardConstants.BLACK) attackers++;
-        if (kRow - 1 >= 0 && state.board[kSq + FastState.DIR_SOUTH] == BoardConstants.BLACK) attackers++;
+        boolean eastBlack = kCol + 1 < 9 && state.board[kSq + FastState.DIR_EAST] == BoardConstants.BLACK;
+        boolean westBlack = kCol - 1 >= 0 && state.board[kSq + FastState.DIR_WEST] == BoardConstants.BLACK;
+        boolean northBlack = kRow + 1 < 9 && state.board[kSq + FastState.DIR_NORTH] == BoardConstants.BLACK;
+        boolean southBlack = kRow - 1 >= 0 && state.board[kSq + FastState.DIR_SOUTH] == BoardConstants.BLACK;
+
+        if (eastBlack) attackers++;
+        if (westBlack) attackers++;
+        if (northBlack) attackers++;
+        if (southBlack) attackers++;
+
+        // Detect lethal pins against Camps or the Throne: 1 Black attacker + opposite Anvil
+        boolean eastAnvil = kCol + 1 < 9 && (BoardConstants.IS_CAMP[kSq + FastState.DIR_EAST] || kSq + FastState.DIR_EAST == BoardConstants.THRONE);
+        boolean westAnvil = kCol - 1 >= 0 && (BoardConstants.IS_CAMP[kSq + FastState.DIR_WEST] || kSq + FastState.DIR_WEST == BoardConstants.THRONE);
+        boolean northAnvil = kRow + 1 < 9 && (BoardConstants.IS_CAMP[kSq + FastState.DIR_NORTH] || kSq + FastState.DIR_NORTH == BoardConstants.THRONE);
+        boolean southAnvil = kRow - 1 >= 0 && (BoardConstants.IS_CAMP[kSq + FastState.DIR_SOUTH] || kSq + FastState.DIR_SOUTH == BoardConstants.THRONE);
+
+        if ((eastBlack && westAnvil) || (westBlack && eastAnvil) || (northBlack && southAnvil) || (southBlack && northAnvil)) {
+            return 6; // Immediate lethal pin / custodian threat against barrier
+        }
 
         return attackers;
+    }
+
+    /**
+     * Computes active mobility for Black soldiers.
+     * Counts immediately accessible orthogonal squares without ray loops (O(1) per piece).
+     */
+    public static int computeBlackMobility(FastState state) {
+        int mobility = 0;
+        byte[] board = state.board;
+        for (int sq = 0; sq < BoardConstants.NUM_SQUARES; sq++) {
+            if (board[sq] == BoardConstants.BLACK) {
+                int r = BoardConstants.row(sq);
+                int c = BoardConstants.col(sq);
+                int fromCamp = BoardConstants.CAMP_ID[sq];
+                if (c + 1 < 9 && isBlackStepLegal(board, fromCamp, sq + 1)) mobility++;
+                if (c - 1 >= 0 && isBlackStepLegal(board, fromCamp, sq - 1)) mobility++;
+                if (r + 1 < 9 && isBlackStepLegal(board, fromCamp, sq + 9)) mobility++;
+                if (r - 1 >= 0 && isBlackStepLegal(board, fromCamp, sq - 9)) mobility++;
+            }
+        }
+        return mobility;
+    }
+
+    private static boolean isBlackStepLegal(byte[] board, int fromCamp, int target) {
+        if (board[target] != BoardConstants.EMPTY || target == BoardConstants.THRONE) return false;
+        int targetCamp = BoardConstants.CAMP_ID[target];
+        if (targetCamp != -1) {
+            return fromCamp == targetCamp;
+        }
+        return true;
     }
 
     private BlackHeuristics() {}
