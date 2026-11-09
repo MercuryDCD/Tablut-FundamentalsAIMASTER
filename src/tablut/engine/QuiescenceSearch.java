@@ -33,8 +33,9 @@ public final class QuiescenceSearch {
     public static final int MAX_QS_DEPTH = 6;
     public static final int DELTA_MARGIN = 400; // Value greater than capturing any single pawn
 
-    // Preallocated move and undo stacks for Quiescence Search (zero heap allocations)
+    // Preallocated move, score, and undo stacks for Quiescence Search (zero heap allocations)
     private final int[][] qsMoveStack = new int[MAX_QS_DEPTH + 1][MoveGenerator.MAX_MOVES];
+    private final int[][] qsScoreStack = new int[MAX_QS_DEPTH + 1][MoveGenerator.MAX_MOVES];
     private final UndoInfo[] qsUndoStack = new UndoInfo[MAX_QS_DEPTH + 1];
 
     private HeuristicWeights weights = new HeuristicWeights();
@@ -105,9 +106,9 @@ public final class QuiescenceSearch {
         // 1. Stand-Pat Evaluation: evaluate static position
         int standPat = evaluateLeaf(state);
 
-        // Beta cutoff: position is so advantageous that opponent will avoid it
+        // Beta cutoff: position is so advantageous that opponent will avoid it (fail-soft)
         if (standPat >= beta) {
-            return beta;
+            return standPat;
         }
 
         if (standPat > alpha) {
@@ -122,18 +123,20 @@ public final class QuiescenceSearch {
         // 2. Delta Pruning: can any capture raise score above alpha?
         // In Ashton Tablut, King escapes and King captures are terminal moves worth +/-100,000.
         // Delta pruning is strictly bypassed when tactical King threats or King escape options exist.
+        boolean kingThreatened = isKingThreatened(state);
         boolean kingTacticsPossible = (state.kingSquare != BoardConstants.THRONE && BoardConstants.MIN_DISTANCE_TO_ESCAPE[state.kingSquare] <= 2)
-                || isKingThreatened(state);
+                || kingThreatened;
 
         if (!kingTacticsPossible && standPat + DELTA_MARGIN < alpha) {
-            return alpha;
+            return standPat + DELTA_MARGIN;
         }
 
         // 3. Generate candidate moves and filter strictly for tactical captures & escapes
         int[] allMoves = qsMoveStack[qsPly];
+        int[] qsScores = qsScoreStack[qsPly];
         int numAllMoves = MoveGenerator.generateMoves(state, allMoves, 0);
 
-        // Filter tactical moves in-place
+        // Filter and score tactical moves in-place
         int numTacticalMoves = 0;
         for (int i = 0; i < numAllMoves; i++) {
             int move = allMoves[i];
@@ -142,7 +145,7 @@ public final class QuiescenceSearch {
             byte piece = state.board[from];
 
             boolean isKingEscape = (piece == BoardConstants.KING && BoardConstants.IS_WIN_SQUARE_FOR_KING[to]);
-            boolean isKingEvasion = (piece == BoardConstants.KING && state.turn == BoardConstants.WHITE_TURN && isKingThreatened(state));
+            boolean isKingEvasion = (piece == BoardConstants.KING && state.turn == BoardConstants.WHITE_TURN && kingThreatened);
             int capScore = MoveOrderer.evaluateCaptures(state, piece, to);
 
             // Phase 14 / P3 Tactical Extension:
@@ -172,7 +175,9 @@ public final class QuiescenceSearch {
             }
 
             if (isKingEscape || isKingEvasion || capScore > 0 || isKingAdvanceOrFork) {
-                allMoves[numTacticalMoves++] = move;
+                int idx = numTacticalMoves++;
+                allMoves[idx] = move;
+                qsScores[idx] = scoreTacticalMove(state, piece, from, to, isKingEscape, isKingEvasion, capScore);
             }
         }
 
@@ -181,26 +186,12 @@ public final class QuiescenceSearch {
             return standPat;
         }
 
-        // Prioritize: move King escapes and King capture moves to position 0
-        for (int i = 0; i < numTacticalMoves; i++) {
-            int move = allMoves[i];
-            int from = Move.getFrom(move);
-            int to = Move.getTo(move);
-            byte piece = state.board[from];
-            boolean isKingEscape = (piece == BoardConstants.KING && BoardConstants.IS_WIN_SQUARE_FOR_KING[to]);
-            boolean isKingCap = (state.turn == BoardConstants.BLACK_TURN && (MoveOrderer.evaluateCaptures(state, piece, to) >= MoveOrderer.SCORE_CAPTURE_KING));
-
-            if (isKingEscape || isKingCap) {
-                if (i != 0) {
-                    int tmp = allMoves[0];
-                    allMoves[0] = allMoves[i];
-                    allMoves[i] = tmp;
-                }
-                break;
-            }
-        }
+        // Sort all tactical moves in-place by descending priority:
+        // Winning move (King escape / King capture) > Multi-capture > Single capture > King advance/evasion > Escort
+        sortTacticalMoves(allMoves, qsScores, numTacticalMoves);
 
         UndoInfo undo = qsUndoStack[qsPly];
+        int bestScore = standPat;
 
         for (int i = 0; i < numTacticalMoves; i++) {
             int move = allMoves[i];
@@ -208,15 +199,63 @@ public final class QuiescenceSearch {
             int score = -search(state, -beta, -alpha, qsPly + 1, searchPly + 1);
             state.unmakeMove(move, undo);
 
+            if (score > bestScore) {
+                bestScore = score;
+            }
             if (score >= beta) {
-                return beta; // Fail-high cutoff
+                return score; // Fail-soft cutoff
             }
             if (score > alpha) {
                 alpha = score;
             }
         }
 
-        return alpha;
+        return bestScore;
+    }
+
+    /**
+     * Computes tactical priority score for Quiescence Search move ordering:
+     * Winning move (King escape / King capture) > Captures (multi > single) > King advance/evasion > Escort.
+     */
+    public static int scoreTacticalMove(FastState state, byte piece, int from, int to,
+                                        boolean isKingEscape, boolean isKingEvasion, int capScore) {
+        if (isKingEscape || (state.turn == BoardConstants.BLACK_TURN && capScore >= MoveOrderer.SCORE_CAPTURE_KING)) {
+            return 2_000_000 + capScore;
+        }
+        if (capScore > 0) {
+            return capScore;
+        }
+        if (piece == BoardConstants.KING) {
+            int distFrom = BoardConstants.MIN_DISTANCE_TO_ESCAPE[from];
+            int distTo = BoardConstants.MIN_DISTANCE_TO_ESCAPE[to];
+            int score = 100_000 + (10 - distTo) * 2_000;
+            if (distTo < distFrom) {
+                score += (distFrom - distTo) * 5_000;
+            }
+            if (isKingEvasion) {
+                score += 20_000;
+            }
+            return score;
+        }
+        return 10_000;
+    }
+
+    /**
+     * Sorts tactical moves and their scores in-place in descending order of priority.
+     */
+    public static void sortTacticalMoves(int[] moves, int[] scores, int numMoves) {
+        for (int i = 1; i < numMoves; i++) {
+            int move = moves[i];
+            int score = scores[i];
+            int j = i - 1;
+            while (j >= 0 && scores[j] < score) {
+                moves[j + 1] = moves[j];
+                scores[j + 1] = scores[j];
+                j--;
+            }
+            moves[j + 1] = move;
+            scores[j + 1] = score;
+        }
     }
 
     public static boolean isKingThreatened(FastState state) {

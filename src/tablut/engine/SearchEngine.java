@@ -64,6 +64,7 @@ public final class SearchEngine {
     private int gameHistoryCount = 0;
     private final long[] searchPath = new long[MAX_DEPTH];
     private int repetitionEventCounter = 0;
+    private int lastCapturePly = 0;
 
     public static final class SearchResult {
         public final int bestMove;
@@ -291,8 +292,9 @@ public final class SearchEngine {
         if (useTranspositionTable) {
             tt.newSearch();
         }
-        moveOrderer.clear();
+        moveOrderer.prepareNextSearch();
         this.repetitionEventCounter = 0;
+        this.lastCapturePly = 0;
         this.effectiveBranchingFactor = DEFAULT_BRANCHING_FACTOR;
         this.prevDepthDuration = 0;
 
@@ -326,7 +328,8 @@ public final class SearchEngine {
                 beta = Math.min(BaselineEvaluation.INFINITY, bestScoreOverall + aspirationDelta);
             }
 
-            // Order root moves placing prior best move / TT move first and sorting winning moves
+            // Order root moves: on depth 1 use heuristic move ordering; on depth > 1 preserve
+            // the stable minimax score ordering from depth d-1 with priorBest promoted to front.
             int rootTtMove = Move.NULL_MOVE;
             if (useTranspositionTable) {
                 int ttIdx = tt.probe(rootState.zobristHash);
@@ -347,23 +350,31 @@ public final class SearchEngine {
             while (!depthInterrupted) {
                 bestScoreThisDepth = -BaselineEvaluation.INFINITY;
                 bestMoveThisDepth = Move.NULL_MOVE;
+                boolean bestMoveHangs = false;
                 java.util.Arrays.fill(rootMoveScores, 0, numRootMoves, -BaselineEvaluation.INFINITY);
                 int currentAlpha = alpha;
 
                 for (int i = 0; i < numRootMoves; i++) {
                     int move = rootMoves[i];
                     rootState.makeMove(move, undo);
+                    this.lastCapturePly = (undo.capturedCount > 0) ? 1 : 0;
 
                     int score;
-                    if (i == 0 || !usePVS) {
+                    if (depth == 1) {
+                        score = -negamax(rootState, 0, -beta, -alpha, 1, 0);
+                    } else if (i == 0 || !usePVS) {
                         score = -negamax(rootState, depth - 1, -beta, -currentAlpha, 1, 0);
                     } else {
-                        score = -negamax(rootState, depth - 1, -currentAlpha - 1, -currentAlpha, 1, 0);
-                        if (score > currentAlpha && score < beta && !stopped) {
-                            score = -negamax(rootState, depth - 1, -beta, -currentAlpha, 1, 0);
+                        int scoutAlpha = (bestMoveHangs && currentAlpha > alpha)
+                                ? Math.max(alpha, currentAlpha - ANTI_HANGING_TIE_TOLERANCE)
+                                : currentAlpha;
+                        score = -negamax(rootState, depth - 1, -scoutAlpha - 1, -scoutAlpha, 1, 0);
+                        if (score > scoutAlpha && score < beta && !stopped) {
+                            score = -negamax(rootState, depth - 1, -beta, -scoutAlpha, 1, 0);
                         }
                     }
 
+                    this.lastCapturePly = 0;
                     rootState.unmakeMove(move, undo);
 
                     if (stopped) {
@@ -376,6 +387,8 @@ public final class SearchEngine {
                     if (score > bestScoreThisDepth) {
                         bestScoreThisDepth = score;
                         bestMoveThisDepth = move;
+                        bestMoveHangs = (bestScoreThisDepth < WIN_THRESHOLD)
+                                && leavesFriendlyPieceHanging(rootState, bestMoveThisDepth);
                     }
 
                     if (score > currentAlpha) {
@@ -407,7 +420,7 @@ public final class SearchEngine {
             }
 
             if (!depthInterrupted) {
-                // Root Anti-Hanging Move Tie-Breaker (Phase 13 Pillar 3)
+                // Root Anti-Hanging Move Tie-Breaker (Phase 13 Pillar 3 & Phase 15 Pillar 4)
                 if (bestScoreThisDepth < WIN_THRESHOLD && bestMoveThisDepth != Move.NULL_MOVE) {
                     boolean topHangs = leavesFriendlyPieceHanging(rootState, bestMoveThisDepth);
                     if (topHangs) {
@@ -435,6 +448,7 @@ public final class SearchEngine {
                 bestMoveOverall = bestMoveThisDepth;
                 bestScoreOverall = bestScoreThisDepth;
                 completedDepth = depth;
+
                 long currentDepthDuration = System.currentTimeMillis() - depthStartTime;
 
                 // Dynamic Effective Branching Calibration: clamp between 2.2 and 4.5
@@ -590,6 +604,10 @@ public final class SearchEngine {
             state.makeMove(move, undo);
 
             boolean isCapture = (undo.capturedCount > 0);
+            int prevCapturePly = this.lastCapturePly;
+            if (isCapture) {
+                this.lastCapturePly = ply + 1;
+            }
             boolean isKingThreat = (state.kingSquare != BoardConstants.THRONE &&
                     TacticalCutoffs.countKingEscapeCorridors(state, state.kingSquare) > 0)
                     || QuiescenceSearch.isKingThreatened(state);
@@ -621,6 +639,7 @@ public final class SearchEngine {
                 }
             }
 
+            this.lastCapturePly = prevCapturePly;
             state.unmakeMove(move, undo);
 
             if (stopped) {
@@ -680,28 +699,61 @@ public final class SearchEngine {
     }
 
     /**
-     * Orders root moves placing the principal variation (PV) move from prior depth first.
+     * Stably sorts root moves and their corresponding scores in descending order of minimax score
+     * so that iteration d+1 explores moves in true depth-d score order for PVS and LMR (Phase 15 Pillar 2).
      */
-    private void orderRootMoves(int[] moves, int numMoves, int pvMove) {
+    public static void sortRootByScores(int[] moves, int[] scores, int numMoves) {
+        for (int i = 1; i < numMoves; i++) {
+            int move = moves[i];
+            int score = scores[i];
+            int j = i - 1;
+            while (j >= 0 && scores[j] < score) {
+                moves[j + 1] = moves[j];
+                scores[j + 1] = scores[j];
+                j--;
+            }
+            moves[j + 1] = move;
+            scores[j + 1] = score;
+        }
+    }
+
+    /**
+     * Orders root moves placing the principal variation (PV) move from prior depth first
+     * while preserving the relative order of all other moves.
+     */
+    public static void orderRootMoves(int[] moves, int numMoves, int pvMove) {
         if (pvMove == Move.NULL_MOVE) return;
         for (int i = 0; i < numMoves; i++) {
             if (moves[i] == pvMove) {
                 if (i != 0) {
-                    int tmp = moves[0];
-                    moves[0] = moves[i];
-                    moves[i] = tmp;
+                    int m = moves[i];
+                    for (int k = i; k > 0; k--) {
+                        moves[k] = moves[k - 1];
+                    }
+                    moves[0] = m;
                 }
                 break;
             }
         }
     }
 
+    public void setSearchPathEntry(int ply, long hash) {
+        if (ply >= 0 && ply < MAX_DEPTH) {
+            searchPath[ply] = hash;
+        }
+    }
+
     /**
      * Checks if the given state hash is a 2-fold repetition against either
-     * the actual game history or earlier states along the current search branch.
+     * the actual game history or earlier states along the current search branch,
+     * respecting capture-based history segment resets (lastCapturePly, Phase 15 Pillar 1).
      */
     private boolean isRepetition(long hash, int ply) {
-        if (gameHistory != null && gameHistoryCount > 0) {
+        return isRepetition(hash, ply, this.lastCapturePly);
+    }
+
+    public boolean isRepetition(long hash, int ply, int lastCapturePly) {
+        if (lastCapturePly == 0 && gameHistory != null && gameHistoryCount > 0) {
             for (int i = 0; i < gameHistoryCount; i++) {
                 if (gameHistory[i] == hash) {
                     return true;
@@ -709,7 +761,8 @@ public final class SearchEngine {
             }
         }
         int limit = Math.min(ply, MAX_DEPTH);
-        for (int p = 0; p < limit; p++) {
+        int startPly = Math.max(0, lastCapturePly);
+        for (int p = startPly; p < limit; p++) {
             if (searchPath[p] == hash) {
                 return true;
             }
@@ -717,28 +770,138 @@ public final class SearchEngine {
         return false;
     }
 
+    private static final class HangingContext {
+        final UndoInfo undo = new UndoInfo();
+        final int[] oppMoves = new int[MoveGenerator.MAX_MOVES];
+        long maskLo;
+        long maskHi;
+        boolean winThreat;
+    }
+
+    private static final ThreadLocal<HangingContext> HANGING_CTX = ThreadLocal.withInitial(HangingContext::new);
+
     /**
-     * Checks whether executing 'move' in 'state' leaves any friendly piece en prise
-     * to an immediate 1-ply custodian capture by the opponent (Phase 13 Pillar 3).
+     * Zero-allocation incremental check evaluating whether executing 'move' in 'state'
+     * either exposes the moved piece itself (hungMoved) or newly exposes / increases
+     * 1-ply opponent custodian capture threats on friendly pieces (Phase 13 Pillar 3 & Phase 15 Pillar 4).
      */
     public static boolean leavesFriendlyPieceHanging(FastState state, int move) {
-        UndoInfo undo = new UndoInfo();
+        HangingContext ctx = HANGING_CTX.get();
+        byte myTurn = state.turn;
+        byte oppTurn = (myTurn == BoardConstants.WHITE_TURN) ? BoardConstants.BLACK_TURN : BoardConstants.WHITE_TURN;
+
+        // 1. Evaluate pre-existing opponent capture threats before executing 'move'
+        computeOpponentCaptureMask(state, oppTurn, ctx);
+        long preMaskLo = ctx.maskLo;
+        long preMaskHi = ctx.maskHi;
+        int preCount = Long.bitCount(preMaskLo) + Long.bitCount(preMaskHi);
+
+        // 2. Execute candidate move and evaluate opponent capture threats after 'move'
+        UndoInfo undo = ctx.undo;
         state.makeMove(move, undo);
         try {
-            int[] oppMoves = new int[MoveGenerator.MAX_MOVES];
-            int numOppMoves = MoveGenerator.generateMoves(state, oppMoves, 0);
-            UndoInfo oppUndo = new UndoInfo();
-            for (int i = 0; i < numOppMoves; i++) {
-                state.makeMove(oppMoves[i], oppUndo);
-                boolean captured = (oppUndo.capturedCount > 0) || (state.winner != FastState.WINNER_NONE);
-                state.unmakeMove(oppMoves[i], oppUndo);
-                if (captured) {
-                    return true;
-                }
+            if (state.winner == FastState.WINNER_WHITE && myTurn == BoardConstants.WHITE_TURN) {
+                return false;
             }
-            return false;
+            if (state.winner == FastState.WINNER_BLACK && myTurn == BoardConstants.BLACK_TURN) {
+                return false;
+            }
+            computeOpponentCaptureMask(state, oppTurn, ctx);
+            if (ctx.winThreat) {
+                return true;
+            }
+            long postMaskLo = ctx.maskLo;
+            long postMaskHi = ctx.maskHi;
+
+            // Check if the moved piece itself at 'to' is now hanging (hungMoved)
+            int to = Move.getTo(move);
+            boolean hungMoved = (to < 64)
+                    ? ((postMaskLo & (1L << to)) != 0L)
+                    : ((postMaskHi & (1L << (to - 64))) != 0L);
+            if (hungMoved) {
+                return true;
+            }
+
+            // Check if any previously safe friendly piece is now newly exposed, or total threats increased
+            long newlyExposedLo = postMaskLo & ~preMaskLo;
+            long newlyExposedHi = postMaskHi & ~preMaskHi;
+            if (newlyExposedLo != 0L || newlyExposedHi != 0L) {
+                return true;
+            }
+
+            int postCount = Long.bitCount(postMaskLo) + Long.bitCount(postMaskHi);
+            return postCount > preCount;
         } finally {
             state.unmakeMove(move, undo);
         }
+    }
+
+    private static void computeOpponentCaptureMask(FastState state, byte oppTurn, HangingContext ctx) {
+        byte origTurn = state.turn;
+        state.turn = oppTurn;
+        int numOppMoves = MoveGenerator.generateMoves(state, ctx.oppMoves, 0);
+        long lo = 0L;
+        long hi = 0L;
+        boolean win = false;
+        byte[] board = state.board;
+
+        if (oppTurn == BoardConstants.BLACK_TURN) {
+            for (int i = 0; i < numOppMoves; i++) {
+                int oppTo = Move.getTo(ctx.oppMoves[i]);
+                int toR = BoardConstants.row(oppTo);
+                int toC = BoardConstants.col(oppTo);
+                if (toC <= 6 && MoveOrderer.isBlackPawnCapture(board, oppTo + 1, oppTo + 2)) {
+                    int sq = oppTo + 1;
+                    if (sq < 64) lo |= (1L << sq); else hi |= (1L << (sq - 64));
+                }
+                if (toC >= 2 && MoveOrderer.isBlackPawnCapture(board, oppTo - 1, oppTo - 2)) {
+                    int sq = oppTo - 1;
+                    if (sq < 64) lo |= (1L << sq); else hi |= (1L << (sq - 64));
+                }
+                if (toR <= 6 && MoveOrderer.isBlackPawnCapture(board, oppTo + 9, oppTo + 18)) {
+                    int sq = oppTo + 9;
+                    if (sq < 64) lo |= (1L << sq); else hi |= (1L << (sq - 64));
+                }
+                if (toR >= 2 && MoveOrderer.isBlackPawnCapture(board, oppTo - 9, oppTo - 18)) {
+                    int sq = oppTo - 9;
+                    if (sq < 64) lo |= (1L << sq); else hi |= (1L << (sq - 64));
+                }
+                if (!win && MoveOrderer.isBlackKingCaptureThreat(state, oppTo)) {
+                    win = true;
+                }
+            }
+        } else {
+            for (int i = 0; i < numOppMoves; i++) {
+                int oppMove = ctx.oppMoves[i];
+                int oppFrom = Move.getFrom(oppMove);
+                int oppTo = Move.getTo(oppMove);
+                if (!win && board[oppFrom] == BoardConstants.KING && BoardConstants.IS_WIN_SQUARE_FOR_KING[oppTo]) {
+                    win = true;
+                }
+                int toR = BoardConstants.row(oppTo);
+                int toC = BoardConstants.col(oppTo);
+                if (toC <= 6 && MoveOrderer.isWhitePawnCapture(board, oppTo + 1, oppTo + 2)) {
+                    int sq = oppTo + 1;
+                    if (sq < 64) lo |= (1L << sq); else hi |= (1L << (sq - 64));
+                }
+                if (toC >= 2 && MoveOrderer.isWhitePawnCapture(board, oppTo - 1, oppTo - 2)) {
+                    int sq = oppTo - 1;
+                    if (sq < 64) lo |= (1L << sq); else hi |= (1L << (sq - 64));
+                }
+                if (toR <= 6 && MoveOrderer.isWhitePawnCapture(board, oppTo + 9, oppTo + 18)) {
+                    int sq = oppTo + 9;
+                    if (sq < 64) lo |= (1L << sq); else hi |= (1L << (sq - 64));
+                }
+                if (toR >= 2 && MoveOrderer.isWhitePawnCapture(board, oppTo - 9, oppTo - 18)) {
+                    int sq = oppTo - 9;
+                    if (sq < 64) lo |= (1L << sq); else hi |= (1L << (sq - 64));
+                }
+            }
+        }
+
+        state.turn = origTurn;
+        ctx.maskLo = lo;
+        ctx.maskHi = hi;
+        ctx.winThreat = win;
     }
 }

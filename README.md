@@ -5,9 +5,26 @@
 
 An autonomous, tournament-grade Artificial Intelligence agent engineered to compete in the ancient Norse board game **Ashton Tablut**. Built in Java with zero heap allocations, multi-core Lazy SMP search, dihedral symmetry opening theory, and automated SPSA parameter learning.
 
+> [!IMPORTANT]
+> **Pre-Competition Architecture Freeze:**
+> All Java engine components (move generator, search pruning, heuristics formulas, opening book, and concurrency layer) are officially **feature-complete and frozen**. From this milestone forward, all development cycles are dedicated exclusively to **offline SPSA heuristic weight training** (`scripts/train_overnight.py`) to maximize parameter convergence before tournament deployment.
+
 ---
 
-## 1. What is Ashton Tablut?
+## 1. Competitive Benchmark (vs UNIBO Champions)
+
+In the pre-freeze official tournament benchmark at **30 seconds per move** on the referee server (`Server.jar -t 30`), Antigravity competed against the top historical champions and modern neural engines:
+
+| Opponent | Profile | Score | Match Breakdown |
+| :--- | :--- | :---: | :--- |
+| **brAInmates** | 1st Place UNIBO Champion (2020) | **2.0 / 2.0 (100%)** | • White: Won in 25 plies (`g1` escape)<br>• Black: Won in 32 plies (capture in `g6`) |
+| **THoR** | 3rd Place UNIBO Champion (2020) | **1.5 / 2.0 (75%)** | • White: Draw in 41 plies (repetition fortress)<br>• Black: Won in 26 plies (capture in `d2`) |
+| **Luca** | MLP Neural Network Evaluator (2026/2027) | **2.0 / 2.0 (100%)** | • White: Won in 59 plies (`a3` escape)<br>• Black: Won in 32 plies (forced mate) |
+| **Overall** | **Grand Slam Tournament** | **5.5 / 6.0 (91.7%)** | **5 Wins, 1 Draw, 0 Losses** |
+
+---
+
+## 2. What is Ashton Tablut?
 
 Ashton Tablut is an asymmetric $9 \times 9$ strategy game played between two unequal factions:
 
@@ -60,7 +77,7 @@ flowchart TD
     
     PVS --> LeafCheck{"Leaf Node Reached?"}
     LeafCheck -- "Captures Active" --> Quiescence["Quiescence Search<br/>(Tactical Horizon Resolution)"]
-    LeafCheck -- "Quiet State" --> Eval["Heuristic Evaluation<br/>(17 SPSA Parameter Weights)"]
+    LeafCheck -- "Quiet State" --> Eval["Heuristic Evaluation<br/>(24 SPSA Parameter Weights)"]
     
     Quiescence --> Eval
     Eval --> TimeCheck{"Time Expiring or Cutoff?<br/>(90% Safety Margin)"}
@@ -101,14 +118,14 @@ Rather than treating AI algorithms as black boxes, each component in Antigravity
 
 ### 3.6 Parameterized Linear Heuristics & SPSA Training
 * **The Problem:** Should we use a Deep Neural Network (MLP) or a Linear Heuristic? While neural networks capture subtle patterns, they only evaluate $\sim 150,000$ positions/sec on CPU, limiting search depth to 3–4. In Tablut, shallow search is fatal because 2-step king escapes require seeing at least 4–6 plies ahead.
-* **The Solution:** We designed 17 domain-specific features (escape corridors, 2-way forks, Rhombus blockades, camp preservation, and open-field swarm pressure) running at **30–85 million evaluations/sec**.
-* **How It Learned (SPSA):** We optimized the 17 weights using **Simultaneous Perturbation Stochastic Approximation (SPSA)** across 938,000+ automated self-play games. SPSA perturbs all dimensions simultaneously, learning optimal tactical trade-offs without human bias.
+* **The Solution:** We designed 24 domain-specific features (escape corridors, 2-way forks, Rhombus blockades, camp preservation, shield cohesion, and open-field swarm pressure) running at **30–85 million evaluations/sec**.
+* **Pre-Freeze Tuning & Beyond:** We optimized the weights using **Simultaneous Perturbation Stochastic Approximation (SPSA)** across millions of automated self-play games. Following our pre-freeze architecture lock, continuous multi-night SPSA optimization (`python scripts/train_overnight.py`) serves as the exclusive optimization vector to drive maximum endgame strength before the competition.
 
 ---
 
-## 4. Tactical Insights from Matches Against Luca's Neural Engine
+## 5. Tactical Insights from Competitor Audits & Benchmarks
 
-Pitting the engine against a neural-network-based peer (`team/luca`, an MLP evaluator with 40 domain features and 4-thread Lazy SMP) during development matches provided crucial empirical insights that shaped the current architecture:
+Pitting the engine against top champions (`competitors/brainmates`, `competitors/thor`, and `team/luca`) during development matches provided crucial empirical insights that shaped the current architecture:
 
 * **Graph History Interaction (GHI) & Repetition Traps:** In high-level matches against deep positional play, repeated moves occurred frequently. If a branch evaluated to a draw due to cycle repetition along that specific path, storing that score into the global Transposition Table poisoned unrelated branches, causing the engine to falsely abandon winning lines. Implementing GHI detection to bypass Transposition Table storage on path-dependent draw repetitions completely eliminated table poisoning.
 * **In-Place Lazy Move Selection (`selectBest`):** Analyzing profile traces during competitive matches showed that sorting all 30–60 legal moves upfront with an $O(N^2)$ routine wasted significant clock time at cut-nodes. Switching to on-demand selection—scoring moves once and lazily extracting only the top candidate per iteration—ensured that when move 0 or 1 triggered an alpha-beta cutoff, the remaining moves were never sorted.
@@ -117,14 +134,14 @@ Pitting the engine against a neural-network-based peer (`team/luca`, an MLP eval
 
 ---
 
-## 5. Quickstart & How to Run
+## 6. Quickstart & How to Run
 
-### 5.1 Prerequisites
+### 6.1 Prerequisites
 * Java 17+ (Java 8 bytecode compatible)
 * Python 3.10+ (for training and tournament scripts)
 * PowerShell (Windows) or Bash (Linux / macOS)
 
-### 5.2 Build the Engine
+### 6.2 Build the Engine
 Compile all Java source files into `bin/`:
 ```bash
 # Linux / macOS
@@ -134,14 +151,14 @@ javac -cp "TablutCompetition-master/Tablut/Executables/Server.jar:TablutCompetit
 javac -cp "TablutCompetition-master\Tablut\Executables\Server.jar;TablutCompetition-master\Tablut\lib\*" -d bin src\tablut\engine\*.java
 ```
 
-### 5.3 Run in Competition Mode
+### 6.3 Run in Competition Mode
 Launch the agent conforming to the official UNIBO tournament specification:
 ```bash
 # Syntax: ./runmyplayer.sh <ROLE> <TIMEOUT_SECONDS> <SERVER_IP>
 ./runmyplayer.sh WHITE 45 localhost
 ```
 
-### 5.4 Test Matches & Adversarial Benchmarks
+### 6.4 Test Matches & Adversarial Benchmarks
 * **Single Match vs Baseline or Luca's Engine:**
   ```powershell
   # Play White vs RandomPlayer (45s timeout)
@@ -150,11 +167,11 @@ Launch the agent conforming to the official UNIBO tournament specification:
   # Play Black vs Luca's neural engine (team/luca)
   .\scripts\match_official.ps1 -Role BLACK -Opponent LUCA -Timeout 45
   ```
-* **Run a Head-to-Head Tournament:**
+* **Run a Multi-Competitor Tournament (brAInmates, THoR, Luca):**
   ```powershell
-  .\scripts\tournament_vs_luca.ps1 -Games 2 -Timeout 45
+  powershell -ExecutionPolicy Bypass -File scripts/tournament_vs_opponents.ps1 -Opponent all -Games 2 -Timeout 30
   ```
-* **Overnight SPSA Heuristic Training:**
+* **Overnight SPSA Heuristic Training (Active Development Vector):**
   ```powershell
   python scripts/train_overnight.py --auto-apply
   ```
@@ -164,7 +181,7 @@ Launch the agent conforming to the official UNIBO tournament specification:
 
 ---
 
-## 6. Project Structure & Deep-Dive Wiki
+## 7. Project Structure & Deep-Dive Wiki
 
 ```
 ├── docs/
@@ -173,7 +190,7 @@ Launch the agent conforming to the official UNIBO tournament specification:
 │       ├── Home.md                                      # Overview, Ashton rules & specifications
 │       ├── 01-State-Representation-and-Bit-Architecture.md # Flat byte[81], UndoInfo, Zobrist
 │       ├── 02-Search-and-Pruning-Algorithms.md          # Negamax, PVS, Singular Ext, O(1) Cutoffs
-│       ├── 03-Heuristics-and-Domain-Knowledge.md        # 22 domain weights, SAFE_FORKS, Rhombus, SVD
+│       ├── 03-Heuristics-and-Domain-Knowledge.md        # 24 domain weights, SAFE_FORKS, Rhombus, SVD
 │       ├── 04-Opening-Book-and-Dihedral-Symmetry.md      # D4 group symmetry, Throne retention invariant
 │       ├── 05-Concurrency-and-Lazy-SMP.md               # 4-vCPU Lazy SMP & 2-Slot 134MB Lockless TT
 │       ├── 06-Offline-Tuning-Pipeline-SPSA.md           # Headless simulator, 2-phase overnight SPSA

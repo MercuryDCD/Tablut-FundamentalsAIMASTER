@@ -117,11 +117,13 @@ public final class HeadlessTournament {
         whiteEngine.setHeuristicWeights(whiteWeights);
         whiteEngine.setUseOpeningBook(true);
         whiteEngine.getTranspositionTable().newSearch();
+        whiteEngine.getMoveOrderer().clear();
 
         SearchEngine blackEngine = ctx.blackEngine;
         blackEngine.setHeuristicWeights(blackWeights);
         blackEngine.setUseOpeningBook(true);
         blackEngine.getTranspositionTable().newSearch();
+        blackEngine.getMoveOrderer().clear();
 
         // Preallocated move stack and repetition history
         int[] moves = ctx.moves;
@@ -161,6 +163,10 @@ public final class HeadlessTournament {
             // Check game termination immediately after move
             if (state.isGameOver()) {
                 break;
+            }
+
+            if (undo.capturedCount > 0) {
+                historyCount = 0;
             }
 
             // Check two-fold state repetition (official Ashton Tablut draw rule)

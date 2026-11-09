@@ -25,7 +25,7 @@ public final class HeuristicWeights {
 
     // --- White Evaluation Weights ---
     // Weight index 0: Material value per alive White soldier
-    public int whitePiece = 189;
+    public int whitePiece = 320;
 
     // Weight index 1: Material value per captured Black attacker
     public int blackCaptured = 107;
@@ -91,11 +91,11 @@ public final class HeuristicWeights {
 
     // --- Phase 13 Proactive Escape & Tactical Refinements ---
     // Weight index 21: Proactive bonus for King threatening an unblockable 2-step escape fork (SAFE_FORKS)
-    public int kingSafeForkThreat = 2941;
+    public int kingSafeForkThreat = 350;
 
     // --- Phase 14 Post-Autopsy Tactical Hardening (P1 & P4) ---
     // Weight index 22: Severe penalty when White King abandons Throne e5 without open escape corridors or safe forks
-    public int kingThroneAbandonPenalty = 423;
+    public int kingThroneAbandonPenalty = 450;
 
     // Weight index 23: Penalty for Black abandoning the 8 outer camp corners when White threatens that sector
     public int campPerimeterIntegrityPenalty = 31;
@@ -231,8 +231,10 @@ public final class HeuristicWeights {
      * Resets all parameters to default literature-calibrated values.
      */
     public void resetToDefaults() {
-        this.whitePiece = 189;
+        this.whitePiece = 320;
+        this.blackPiece = 99;
         this.blackCaptured = 107;
+        this.whiteCaptured = 198;
         this.kingDistance = 35;
         this.kingSingleEscape = 1333;
         this.kingDoubleEscape = 18590;
@@ -240,8 +242,6 @@ public final class HeuristicWeights {
         this.kingMobility = 15;
         this.kingVulnerabilityPenalty = 79;
 
-        this.blackPiece = 99;
-        this.whiteCaptured = 198;
         this.rhombusBlockade = 55;
         this.campFrontPreserved = 69;
         this.kingSurroundedThrone = 50;
@@ -254,8 +254,8 @@ public final class HeuristicWeights {
         this.whitePawnDispersionPenalty = 7;
         this.campPinchTraps = 37;
         this.throneAnvilThreats = 30;
-        this.kingSafeForkThreat = 2941;
-        this.kingThroneAbandonPenalty = 423;
+        this.kingSafeForkThreat = 350;
+        this.kingThroneAbandonPenalty = 450;
         this.campPerimeterIntegrityPenalty = 31;
     }
 }

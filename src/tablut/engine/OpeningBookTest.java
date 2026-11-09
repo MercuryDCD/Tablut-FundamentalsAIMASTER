@@ -12,6 +12,7 @@ public final class OpeningBookTest {
         testD4SymmetryEquivalence();
         testMoveLegality();
         testSubsequentBookLine();
+        testTacticalSanitizationAndRecapture();
 
         System.out.println("=== All OpeningBook Tests Passed Successfully! ===");
     }
@@ -125,5 +126,48 @@ public final class OpeningBookTest {
         }
 
         System.out.printf("PASSED (Black responded with %s)\n", Move.toUci(blackMove));
+    }
+
+    /**
+     * Test 5: Verifies that White never plays inner-cross Turn 1 blunders (e4, e6, d5, f5),
+     * Black punishes opponent 1. e4d4 with 1... i4e4, and White immediately recaptures 2. f5f3 after 1. e3d3 1... e2e3.
+     */
+    private static void testTacticalSanitizationAndRecapture() {
+        System.out.print("Test 5: Tactical Turn-1 sanitization & Turn-2 recapture... ");
+        OpeningBook book = new OpeningBook(new java.util.Random(42L));
+        book.setGreedy(false); // Sample across all candidate initial moves
+
+        FastState initial = new FastState();
+        for (int trial = 0; trial < 200; trial++) {
+            int m = book.lookupMove(initial);
+            int from = Move.getFrom(m);
+            if (from == FastState.SQ_E4 || from == FastState.SQ_E6 || from == FastState.SQ_D5 || from == FastState.SQ_F5) {
+                throw new AssertionError("White played inner-cross Turn-1 blunder: " + Move.toUci(m));
+            }
+        }
+
+        // Verify Black punishes opponent 1. e4d4 with 1... i4e4 (capturing e3) in greedy mode
+        book.setGreedy(true);
+        book.setEpsilon(0.0);
+        FastState afterE4D4 = new FastState();
+        UndoInfo undo = new UndoInfo();
+        afterE4D4.makeMove(Move.encode(BoardConstants.squareFromName("e4"), BoardConstants.squareFromName("d4")), undo);
+        int blackPunish = book.lookupMove(afterE4D4);
+        String punishUci = Move.toUci(blackPunish);
+        if (!"i4e4".equals(punishUci) && !"a4e4".equals(punishUci)) {
+            throw new AssertionError("Expected Black to punish 1. e4d4 with i4e4/a4e4, got: " + punishUci);
+        }
+
+        // Verify White immediately recaptures 2. f5f3 after 1. e3d3, 1... e2e3
+        FastState afterE2E3 = new FastState();
+        afterE2E3.makeMove(Move.encode(BoardConstants.squareFromName("e3"), BoardConstants.squareFromName("d3")), undo);
+        afterE2E3.makeMove(Move.encode(BoardConstants.squareFromName("e2"), BoardConstants.squareFromName("e3")), undo);
+        int whiteRecapture = book.lookupMove(afterE2E3);
+        String recaptureUci = Move.toUci(whiteRecapture);
+        if (!"f5f3".equals(recaptureUci)) {
+            throw new AssertionError("Expected White to recapture on e3 with 2. f5f3, got: " + recaptureUci);
+        }
+
+        System.out.println("PASSED (Outer-cross Turn 1, Black i4e4 punish, White f5f3 recapture)");
     }
 }

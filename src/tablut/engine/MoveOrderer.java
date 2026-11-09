@@ -52,7 +52,7 @@ public final class MoveOrderer {
     }
 
     /**
-     * Clears killer moves and history tables between independent searches or matches.
+     * Clears killer moves and history tables between independent matches or tests.
      */
     public void clear() {
         for (int i = 0; i < SearchEngine.MAX_DEPTH; i++) {
@@ -64,6 +64,35 @@ public final class MoveOrderer {
                 historyTable[from][to] = 0;
             }
         }
+    }
+
+    /**
+     * Ages history heuristic scores (halving via unsigned shift) and shifts killer moves
+     * by 2 plies (one full White + Black turn cycle) to preserve inter-turn move ordering
+     * knowledge across consecutive searches within a match (Phase 15 Pillar 2).
+     */
+    public void prepareNextSearch() {
+        for (int i = 0; i < SearchEngine.MAX_DEPTH - 2; i++) {
+            killerMoves[i][0] = killerMoves[i + 2][0];
+            killerMoves[i][1] = killerMoves[i + 2][1];
+        }
+        for (int i = Math.max(0, SearchEngine.MAX_DEPTH - 2); i < SearchEngine.MAX_DEPTH; i++) {
+            killerMoves[i][0] = Move.NULL_MOVE;
+            killerMoves[i][1] = Move.NULL_MOVE;
+        }
+        for (int from = 0; from < BoardConstants.NUM_SQUARES; from++) {
+            for (int to = 0; to < BoardConstants.NUM_SQUARES; to++) {
+                historyTable[from][to] >>>= 1;
+            }
+        }
+    }
+
+    public int getHistoryScore(int from, int to) {
+        return historyTable[from][to];
+    }
+
+    public int getKillerMove(int ply, int slot) {
+        return killerMoves[ply][slot];
     }
 
     /**
@@ -166,6 +195,11 @@ public final class MoveOrderer {
         }
     }
 
+    public int getScoredMoveScore(int ply, int index) {
+        int safePly = Math.min(ply, SearchEngine.MAX_DEPTH - 1);
+        return scoreStack[safePly][index];
+    }
+
     /**
      * Computes the sorting score for a candidate move.
      */
@@ -198,8 +232,21 @@ public final class MoveOrderer {
             return SCORE_KILLER_2;
         }
 
-        // 5. History heuristic (quiet moves frequently successful across the tree)
-        return historyTable[from][to];
+        // 5. History heuristic + tactical King advance / multi-square slide bonus (Phase 15 Pillar 2)
+        int score = historyTable[from][to];
+        if (piece == BoardConstants.KING) {
+            int distFrom = BoardConstants.MIN_DISTANCE_TO_ESCAPE[from];
+            int distTo = BoardConstants.MIN_DISTANCE_TO_ESCAPE[to];
+            if (distTo < distFrom) {
+                score += (distFrom - distTo) * 4_000;
+            }
+            int slideDist = Math.abs(BoardConstants.row(to) - BoardConstants.row(from))
+                          + Math.abs(BoardConstants.col(to) - BoardConstants.col(from));
+            if (slideDist > 1) {
+                score += slideDist * 500;
+            }
+        }
+        return score;
     }
 
     /**
@@ -255,7 +302,7 @@ public final class MoveOrderer {
         return totalScore;
     }
 
-    private static boolean isWhitePawnCapture(byte[] board, int adj, int opp) {
+    public static boolean isWhitePawnCapture(byte[] board, int adj, int opp) {
         if (board[adj] != BoardConstants.BLACK) return false;
         byte oppPiece = board[opp];
         return (oppPiece == BoardConstants.WHITE || oppPiece == BoardConstants.KING)
@@ -263,7 +310,7 @@ public final class MoveOrderer {
                 || BoardConstants.IS_CAMP_ANVIL[opp];
     }
 
-    private static boolean isBlackPawnCapture(byte[] board, int adj, int opp) {
+    public static boolean isBlackPawnCapture(byte[] board, int adj, int opp) {
         if (board[adj] != BoardConstants.WHITE) return false;
         byte oppPiece = board[opp];
         return (oppPiece == BoardConstants.BLACK)

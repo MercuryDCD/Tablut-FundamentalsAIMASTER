@@ -180,3 +180,25 @@ python scripts/mine_openings.py --logs-dir logs --max-plies 6 --min-winrate 0.70
 1. **Log Ingestion:** Parses server match transcripts, reconstructing the sequence of moves and final game outcomes.
 2. **Frequency & Win-Rate Aggregation:** Groups opening trajectories by canonical $D_4$ hash up to ply 6, computing empirical win/loss ratios for each branch.
 3. **Java Code Generation:** Automatically synthesizes sanitized `addLine(...)` statements for high-winrate branches ($> 70\%$), ready for insertion into `OpeningBook.java` with automatic validation against the Throne retention invariant.
+
+---
+
+## 5. Phase 14 & 15 Opening Sanitization & Code Freeze
+
+### 5.1 Tactical Outer-Cross Sanitization
+Analysis of live tournament losses against deep engines revealed that early inner-cross moves (e.g., $1. \dots e4 \to d4$) left friendly defenders tactically hanging (*en prise*) to immediate double-flank captures on ply 2.
+
+In Phase 15, White openings were sanitized to strictly favor secure outer-cross extensions:
+* $1. e7 \to f7$
+* $1. c5 \to c4$
+* $1. g5 \to g6$
+* Elimination of premature King moves and inner-corridor self-hanging moves.
+* Dedicated Black counter-punishment line ($i4 \to e4$) punishing early White inaccuracies.
+
+### 5.2 Stochastic $\varepsilon$-Greedy Selection (80 / 20)
+To prevent adversarial competitors from precomputing refutation trees against deterministic lines, `OpeningBook.java` employs an $\varepsilon$-greedy policy:
+* **80% Probability:** Plays the highest-rated principal canonical move.
+* **20% Probability:** Selects among alternative high-quality theoretical responses.
+
+### 5.3 Code Freeze Declaration
+The opening book theory and coordinate transformation engine are **permanently frozen**. Future iterations rely solely on SPSA weight optimization for middlegame and endgame play.

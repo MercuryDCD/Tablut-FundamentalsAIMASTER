@@ -72,9 +72,11 @@ public final class WhiteHeuristics {
         int minDistanceToEdge = BoardConstants.MIN_DISTANCE_TO_ESCAPE[kSq];
         score -= minDistanceToEdge * weights.kingDistance;
 
-        // 3. Escape Corridors & 2-Way Fork Detection with Corridor Safety (Pillar 3)
+        // 3. Escape Corridors & 2-Way Fork Detection with Full-Ray Corridor Safety (Pillar 3)
         int openCorridors = 0;
         int safeForks = 0;
+        int safeSingles = 0;
+        boolean singleCorridorIntercepted = false;
         if (kSq != BoardConstants.THRONE) {
             openCorridors = countEscapeCorridors(state, kRow, kCol);
             if (openCorridors >= 2) {
@@ -82,25 +84,37 @@ public final class WhiteHeuristics {
                 score += weights.kingDoubleEscape;
             } else if (openCorridors == 1) {
                 int exitSq = getSingleEscapeExitSquare(state, kRow, kCol);
-                if (exitSq != -1 && TacticalCutoffs.canBlackSlideTo(state, exitSq)) {
-                    // Interceptable in 1 ply: discount by 75%
+                singleCorridorIntercepted = (exitSq != -1 && isSingleCorridorInterceptable(state, kRow, kCol, exitSq));
+                if (singleCorridorIntercepted) {
+                    // Interceptable in 1 ply along the ray: discount by 75%
                     score += weights.kingSingleEscape / 4;
                 } else {
                     score += weights.kingSingleEscape;
                 }
             }
+        }
 
-            // 3b. Proactive 2-Step King Escape Forks (Phase 13 Pillar 2)
-            if (openCorridors < 2) {
-                safeForks = computeKingSafeForks(state, kSq, kRow, kCol);
-                if (safeForks > 0 && weights.kingSafeForkThreat > 0) {
-                    score += safeForks * weights.kingSafeForkThreat;
+        // 3b. Proactive King Escape Gradient (evaluated even from Throne!)
+        if (openCorridors < 2) {
+            safeForks = computeKingSafeForks(state, kSq, kRow, kCol);
+            if (safeForks > 0 && weights.kingSafeForkThreat > 0) {
+                score += safeForks * weights.kingSafeForkThreat;
+            }
+            if (safeForks == 0) {
+                safeSingles = computeKingSafeSingleCorridors(state, kSq, kRow, kCol);
+                if (safeSingles > 0) {
+                    score += safeSingles * (weights.kingSafeForkThreat / 3);
                 }
             }
+        }
 
-            // 3c. King Throne Abandonment Penalty (Phase 14 / P1)
-            // Penalize severely if King abandoned Throne e5 without open escape corridors or safe forks
-            if (weights.kingThroneAbandonPenalty > 0 && openCorridors == 0 && safeForks == 0) {
+        // 3c. King Throne Abandonment Penalty (Phase 14 / P1)
+        if (kSq != BoardConstants.THRONE) {
+            boolean hasUnblockedEscape = (openCorridors >= 2)
+                    || (openCorridors == 1 && !singleCorridorIntercepted)
+                    || (safeForks > 0)
+                    || (safeSingles > 0);
+            if (weights.kingThroneAbandonPenalty > 0 && !hasUnblockedEscape) {
                 score -= weights.kingThroneAbandonPenalty;
             }
         }
@@ -119,15 +133,41 @@ public final class WhiteHeuristics {
         int vulnerability = evaluateKingVulnerability(state, kSq, kRow, kCol);
         score -= vulnerability * weights.kingVulnerabilityPenalty;
 
-        // 7. King-Defender Shield Cohesion (Pillar 2)
-        if (weights.kingDefenderShieldCohesion > 0) {
-            int shieldScore = computeKingDefenderShieldCohesion(state, kRow, kCol);
+        // 7 & 8. Fused Single-Pass Scan for Shield Cohesion & Pawn Dispersion (Phase 15 Pillar 3)
+        boolean evalShield = (weights.kingDefenderShieldCohesion > 0);
+        boolean evalDispersion = (weights.whitePawnDispersionPenalty > 0 && openCorridors < 2);
+        if (evalShield || evalDispersion) {
+            int shieldScore = 0;
+            int dispersionPenalty = 0;
+            byte[] board = state.board;
+            for (int sq = 0; sq < BoardConstants.NUM_SQUARES; sq++) {
+                if (board[sq] == BoardConstants.WHITE) {
+                    int r = BoardConstants.row(sq);
+                    int c = BoardConstants.col(sq);
+                    int dr = Math.abs(r - kRow);
+                    int dc = Math.abs(c - kCol);
+                    if (evalShield) {
+                        int chebyshev = Math.max(dr, dc);
+                        if (chebyshev <= 2) {
+                            shieldScore += (3 - chebyshev);
+                        }
+                    }
+                    if (evalDispersion) {
+                        int manhattan = dr + dc;
+                        if (manhattan > 3) {
+                            int excess = manhattan - 3;
+                            dispersionPenalty += excess * excess;
+                            if (r <= 1 || r >= 7 || c <= 1 || c >= 7) {
+                                dispersionPenalty += 8;
+                                if (BoardConstants.IS_WIN_SQUARE_FOR_KING[sq]) {
+                                    dispersionPenalty += 6;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             score += shieldScore * weights.kingDefenderShieldCohesion;
-        }
-
-        // 8. White Pawn Dispersion Penalty (Pillar 2)
-        if (weights.whitePawnDispersionPenalty > 0) {
-            int dispersionPenalty = computeWhitePawnDispersionPenalty(state, kRow, kCol, openCorridors);
             score -= dispersionPenalty * weights.whitePawnDispersionPenalty;
         }
 
@@ -185,6 +225,33 @@ public final class WhiteHeuristics {
     }
 
     /**
+     * Penalizes White soldiers that abandon the central escort shield (manhattan > 3 from King)
+     * to loiter on the outer board rings (r <= 1, r >= 7, c <= 1, c >= 7) or self-block King escape squares
+     * when the King has not yet established a double-corridor fork.
+     */
+    public static int computeWhitePerimeterStrandingPenalty(FastState state, int kRow, int kCol, int openCorridors) {
+        if (openCorridors >= 2) {
+            return 0;
+        }
+        int penalty = 0;
+        byte[] board = state.board;
+        for (int sq = 0; sq < BoardConstants.NUM_SQUARES; sq++) {
+            if (board[sq] == BoardConstants.WHITE) {
+                int r = BoardConstants.row(sq);
+                int c = BoardConstants.col(sq);
+                int manhattan = Math.abs(r - kRow) + Math.abs(c - kCol);
+                if (manhattan > 3 && (r <= 1 || r >= 7 || c <= 1 || c >= 7)) {
+                    penalty += 6;
+                    if (BoardConstants.IS_WIN_SQUARE_FOR_KING[sq]) {
+                        penalty += 4;
+                    }
+                }
+            }
+        }
+        return penalty;
+    }
+
+    /**
      * Evaluates squares S reachable by the King in 1 legal move such that, if the King
      * moves to S, it simultaneously creates >= 2 unblocked escape corridors to the board perimeter,
      * and no Black soldier can capture the King on S in 1 move (Phase 13 Pillar 2).
@@ -221,12 +288,72 @@ public final class WhiteHeuristics {
         return safeForks;
     }
 
+    /**
+     * Evaluates squares S reachable by the King in 1 legal move such that, if the King
+     * moves to S, it commands exactly 1 unblocked escape corridor to the board perimeter,
+     * and no Black soldier can capture the King on S in 1 move.
+     * Bridges the central 3x3 camp-shadow zone where direct openCorridors is geometrically 0.
+     */
+    public static int computeKingSafeSingleCorridors(FastState state, int kSq, int kRow, int kCol) {
+        int safeSingles = 0;
+        byte[] board = state.board;
+
+        // East (+1)
+        for (int c = kCol + 1; c < 9; c++) {
+            int sq = BoardConstants.coord(kRow, c);
+            if (board[sq] != BoardConstants.EMPTY || BoardConstants.IS_CAMP[sq] || sq == BoardConstants.THRONE) break;
+            if (isSafeSingleCorridorSquare(state, sq, kSq)) safeSingles++;
+        }
+        // West (-1)
+        for (int c = kCol - 1; c >= 0; c--) {
+            int sq = BoardConstants.coord(kRow, c);
+            if (board[sq] != BoardConstants.EMPTY || BoardConstants.IS_CAMP[sq] || sq == BoardConstants.THRONE) break;
+            if (isSafeSingleCorridorSquare(state, sq, kSq)) safeSingles++;
+        }
+        // North (+9)
+        for (int r = kRow + 1; r < 9; r++) {
+            int sq = BoardConstants.coord(r, kCol);
+            if (board[sq] != BoardConstants.EMPTY || BoardConstants.IS_CAMP[sq] || sq == BoardConstants.THRONE) break;
+            if (isSafeSingleCorridorSquare(state, sq, kSq)) safeSingles++;
+        }
+        // South (-9)
+        for (int r = kRow - 1; r >= 0; r--) {
+            int sq = BoardConstants.coord(r, kCol);
+            if (board[sq] != BoardConstants.EMPTY || BoardConstants.IS_CAMP[sq] || sq == BoardConstants.THRONE) break;
+            if (isSafeSingleCorridorSquare(state, sq, kSq)) safeSingles++;
+        }
+
+        return safeSingles;
+    }
+
+    private static boolean isSafeSingleCorridorSquare(FastState state, int sSq, int kSq) {
+        int corridors = countCorridorsFromSquare(state, sSq, kSq);
+        if (corridors != 1) return false;
+
+        state.board[kSq] = BoardConstants.EMPTY;
+        state.board[sSq] = BoardConstants.KING;
+        state.kingSquare = (byte) sSq;
+
+        boolean threatened = TacticalCutoffs.hasImmediateKingCapture(state, sSq);
+
+        state.board[sSq] = BoardConstants.EMPTY;
+        state.board[kSq] = BoardConstants.KING;
+        state.kingSquare = (byte) kSq;
+
+        return !threatened;
+    }
+
     private static boolean isSafeForkSquare(FastState state, int sSq, int kSq) {
         // 1. Check if sSq commands >= 2 unblocked corridors to perimeter
         int corridors = countCorridorsFromSquare(state, sSq, kSq);
         if (corridors < 2) return false;
 
-        // 2. Check if King on sSq is safe from immediate Black capture
+        // 2. If Black can directly slide a soldier onto sSq in 1 move, the fork square is immediately blockable
+        if (TacticalCutoffs.canBlackSlideTo(state, sSq)) {
+            return false;
+        }
+
+        // 3. Check if King on sSq is safe from immediate Black capture
         state.board[kSq] = BoardConstants.EMPTY;
         state.board[sSq] = BoardConstants.KING;
         state.kingSquare = (byte) sSq;
@@ -239,6 +366,35 @@ public final class WhiteHeuristics {
         state.kingSquare = (byte) kSq;
 
         return !threatened;
+    }
+
+    /**
+     * Checks whether Black can orthogonally slide a piece to ANY square along the single escape
+     * corridor from (kRow, kCol) to exitSq (inclusive) in 1 move.
+     */
+    public static boolean isSingleCorridorInterceptable(FastState state, int kRow, int kCol, int exitSq) {
+        if (exitSq < 0) return false;
+        int eRow = BoardConstants.row(exitSq);
+        int eCol = BoardConstants.col(exitSq);
+
+        if (eRow == kRow && eCol == 8) {
+            for (int c = kCol + 1; c <= 8; c++) {
+                if (TacticalCutoffs.canBlackSlideTo(state, BoardConstants.coord(kRow, c))) return true;
+            }
+        } else if (eRow == kRow && eCol == 0) {
+            for (int c = kCol - 1; c >= 0; c--) {
+                if (TacticalCutoffs.canBlackSlideTo(state, BoardConstants.coord(kRow, c))) return true;
+            }
+        } else if (eCol == kCol && eRow == 8) {
+            for (int r = kRow + 1; r <= 8; r++) {
+                if (TacticalCutoffs.canBlackSlideTo(state, BoardConstants.coord(r, kCol))) return true;
+            }
+        } else if (eCol == kCol && eRow == 0) {
+            for (int r = kRow - 1; r >= 0; r--) {
+                if (TacticalCutoffs.canBlackSlideTo(state, BoardConstants.coord(r, kCol))) return true;
+            }
+        }
+        return TacticalCutoffs.canBlackSlideTo(state, exitSq);
     }
 
     public static int countCorridorsFromSquare(FastState state, int sSq, int kSqOriginal) {
@@ -593,29 +749,44 @@ public final class WhiteHeuristics {
         }
 
         // 3. King in open field: standard custodian capture (2 opposing flankers or 1 flanker + anvil)
+        // Incorporates brAInmates' PROTECTION_KING counter-flank defense (Phase 15 Pillar 4):
+        // When the King has a hostile neighbor on one side, occupying the opposite square with a
+        // protective White soldier blocks the capture and reduces overall King vulnerability.
         int threats = 0;
+        int counterFlankProtection = 0;
+        byte[] board = state.board;
 
         // Horizontal axis: check East and West
         boolean eastHostile = false;
         boolean westHostile = false;
         boolean eastEmpty = false;
         boolean westEmpty = false;
+        boolean eastWhite = false;
+        boolean westWhite = false;
+        int eSq = kSq + FastState.DIR_EAST;
+        int wSq = kSq + FastState.DIR_WEST;
 
         if (kCol + 1 < 9) {
-            int eSq = kSq + FastState.DIR_EAST;
-            if (state.board[eSq] == BoardConstants.BLACK || BoardConstants.IS_CAMP[eSq] || eSq == BoardConstants.THRONE) eastHostile = true;
-            else if (state.board[eSq] == BoardConstants.EMPTY && !BoardConstants.IS_CAMP[eSq]) eastEmpty = true;
+            byte ep = board[eSq];
+            if (ep == BoardConstants.BLACK || BoardConstants.IS_CAMP[eSq] || eSq == BoardConstants.THRONE) eastHostile = true;
+            else if (ep == BoardConstants.WHITE) eastWhite = true;
+            else if (ep == BoardConstants.EMPTY) eastEmpty = true;
         }
         if (kCol - 1 >= 0) {
-            int wSq = kSq + FastState.DIR_WEST;
-            if (state.board[wSq] == BoardConstants.BLACK || BoardConstants.IS_CAMP[wSq] || wSq == BoardConstants.THRONE) westHostile = true;
-            else if (state.board[wSq] == BoardConstants.EMPTY && !BoardConstants.IS_CAMP[wSq]) westEmpty = true;
+            byte wp = board[wSq];
+            if (wp == BoardConstants.BLACK || BoardConstants.IS_CAMP[wSq] || wSq == BoardConstants.THRONE) westHostile = true;
+            else if (wp == BoardConstants.WHITE) westWhite = true;
+            else if (wp == BoardConstants.EMPTY) westEmpty = true;
         }
 
         if (eastHostile && westHostile) {
             threats += 4;
-        } else if ((eastHostile && westEmpty) || (westHostile && eastEmpty)) {
-            threats++;
+        } else if (eastHostile && westEmpty) {
+            threats += hasAdjacentWhiteSoldier(board, wSq, kRow, kCol - 1) ? 1 : 2;
+        } else if (westHostile && eastEmpty) {
+            threats += hasAdjacentWhiteSoldier(board, eSq, kRow, kCol + 1) ? 1 : 2;
+        } else if ((eastHostile && westWhite) || (westHostile && eastWhite)) {
+            counterFlankProtection++;
         }
 
         // Vertical axis: check North and South
@@ -623,25 +794,46 @@ public final class WhiteHeuristics {
         boolean southHostile = false;
         boolean northEmpty = false;
         boolean southEmpty = false;
+        boolean northWhite = false;
+        boolean southWhite = false;
+        int nSq = kSq + FastState.DIR_NORTH;
+        int sSq = kSq + FastState.DIR_SOUTH;
 
         if (kRow + 1 < 9) {
-            int nSq = kSq + FastState.DIR_NORTH;
-            if (state.board[nSq] == BoardConstants.BLACK || BoardConstants.IS_CAMP[nSq] || nSq == BoardConstants.THRONE) northHostile = true;
-            else if (state.board[nSq] == BoardConstants.EMPTY && !BoardConstants.IS_CAMP[nSq]) northEmpty = true;
+            byte np = board[nSq];
+            if (np == BoardConstants.BLACK || BoardConstants.IS_CAMP[nSq] || nSq == BoardConstants.THRONE) northHostile = true;
+            else if (np == BoardConstants.WHITE) northWhite = true;
+            else if (np == BoardConstants.EMPTY) northEmpty = true;
         }
         if (kRow - 1 >= 0) {
-            int sSq = kSq + FastState.DIR_SOUTH;
-            if (state.board[sSq] == BoardConstants.BLACK || BoardConstants.IS_CAMP[sSq] || sSq == BoardConstants.THRONE) southHostile = true;
-            else if (state.board[sSq] == BoardConstants.EMPTY && !BoardConstants.IS_CAMP[sSq]) southEmpty = true;
+            byte sp = board[sSq];
+            if (sp == BoardConstants.BLACK || BoardConstants.IS_CAMP[sSq] || sSq == BoardConstants.THRONE) southHostile = true;
+            else if (sp == BoardConstants.WHITE) southWhite = true;
+            else if (sp == BoardConstants.EMPTY) southEmpty = true;
         }
 
         if (northHostile && southHostile) {
             threats += 4;
-        } else if ((northHostile && southEmpty) || (southHostile && northEmpty)) {
-            threats++;
+        } else if (northHostile && southEmpty) {
+            threats += hasAdjacentWhiteSoldier(board, sSq, kRow - 1, kCol) ? 1 : 2;
+        } else if (southHostile && northEmpty) {
+            threats += hasAdjacentWhiteSoldier(board, nSq, kRow + 1, kCol) ? 1 : 2;
+        } else if ((northHostile && southWhite) || (southHostile && northWhite)) {
+            counterFlankProtection++;
         }
 
-        return threats;
+        if (threats >= 4) {
+            return threats;
+        }
+        return Math.max(0, threats - counterFlankProtection);
+    }
+
+    private static boolean hasAdjacentWhiteSoldier(byte[] board, int sq, int r, int c) {
+        if (c + 1 < 9 && board[sq + FastState.DIR_EAST] == BoardConstants.WHITE) return true;
+        if (c - 1 >= 0 && board[sq + FastState.DIR_WEST] == BoardConstants.WHITE) return true;
+        if (r + 1 < 9 && board[sq + FastState.DIR_NORTH] == BoardConstants.WHITE) return true;
+        if (r - 1 >= 0 && board[sq + FastState.DIR_SOUTH] == BoardConstants.WHITE) return true;
+        return false;
     }
 
     private WhiteHeuristics() {}

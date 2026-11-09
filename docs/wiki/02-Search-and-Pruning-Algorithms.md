@@ -188,3 +188,30 @@ In Phase 13, the Transposition Table architecture was expanded to a **2-Slot Buc
 * **Slot 1 (Always-Replace Fallback):** Overwritten unconditionally on every write collision, capturing local tactical transpositions and shallow horizon changes without overwriting deep strategic nodes.
 
 Probing checks Slot 0 first; on a miss, it probes Slot 1. This 2-slot hierarchy prevents cache thrashing and increases effective TT hit rates by over 18% during deep iterative deepening searches.
+
+---
+
+## 6. Phase 15 Search & Move Ordering Hardening
+
+In the final pre-freeze optimization phase, several critical synchronization and pruning improvements were integrated:
+
+### 6.1 Multi-Threaded Best-Worker Adoption (`chooseBestWorker`)
+Because Lazy SMP helper threads start with staggered depths (`1 + threadId % 2`) and root move permutations, a helper worker can occasionally complete depth $d+1$ before the master thread finishes depth $d+1$ when the search clock expires. `ParallelSearchEngine` evaluates all workers on join and adopts the result from the thread that achieved the deepest completed depth or found the fastest forced mate.
+
+### 6.2 Root Move Sorting by Minimax Scores (`sortRootByScores`)
+At the end of each completed IDS depth $d$, root candidate moves are sorted in descending order of their depth-$d$ minimax scores. This guarantees that depth $d+1$ explores moves in true minimax priority, maximizing PVS null-window cutoffs and eliminating move instability.
+
+### 6.3 King Escape-Advance Move Ordering Bonus
+In `MoveOrderer.scoreMove`, quiet King moves that decrease `MIN_DISTANCE_TO_ESCAPE[to] < MIN_DISTANCE_TO_ESCAPE[from]` receive a dynamic priority bonus of `+(distFrom - distTo) * 4_000`, accelerating alpha-beta cutoffs on King escape breakouts.
+
+### 6.4 Full Tactical Sorting in Quiescence Search
+Replaced single best-move extraction in `QuiescenceSearch.java` with a complete in-place insertion sort over `qsScoreStack[qsDepth]`, prioritizing immediate wins, multi-captures, single captures, King escape advances, and escorts.
+
+### 6.5 Irreversible Capture Repetition Optimization (`lastCapturePly`)
+Because piece captures permanently alter piece count, positions before a capture can never repeat under Ashton Tablut rules. Tracking `lastCapturePly` down the search tree allows skipping `gameHistory` checks entirely whenever `lastCapturePly > 0`, checking only `searchPath[lastCapturePly .. ply - 1]`.
+
+---
+
+## 7. Architecture Freeze Status
+
+As of Phase 16, all search and pruning algorithms are **permanently frozen**. Future performance enhancements will derive solely from offline SPSA parameter training on `HeuristicWeights.java`.

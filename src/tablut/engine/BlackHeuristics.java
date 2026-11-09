@@ -86,9 +86,8 @@ public final class BlackHeuristics {
         score += state.blackCount * weights.blackPiece;
         score += (8 - state.whiteCount) * weights.whiteCaptured;
 
-        // 2. The 8-Point Rhombus Blockade
-        int rhombusCount = countRhombusPositions(state);
-        score += rhombusCount * weights.rhombusBlockade;
+        // 2. The 8-Point Rhombus Blockade (Dynamic Closure & Endgame Attenuation, Phase 15 Pillar 4)
+        score += evaluateRhombusBlockade(state, weights);
 
         // 3. Camp Doorway Discipline ("Keep the Fronts")
         int campFrontsCount = countCampFronts(state);
@@ -109,41 +108,152 @@ public final class BlackHeuristics {
             score += containment * weights.kingContainment;
         }
 
-        // 6. Connected Blockade Chains (Orthogonal & Diagonal Soldier Links)
-        int connectedChains = countConnectedChains(state);
+        // 6, 7, 8, 9, 11. Fused Single-Pass 81-Square Board Scan (Phase 15 Pillar 3)
+        boolean evalChains = (weights.blackConnectedChains != 0);
+        boolean evalMobility = (weights.blackMobility > 0);
+        boolean evalOpenField = (distFromCenter >= 2 && weights.kingOpenFieldContainment > 0);
+        boolean evalPinchTraps = (weights.campPinchTraps > 0);
+        boolean evalPerimeter = (weights.campPerimeterIntegrityPenalty > 0);
+
+        int connectedChains = 0;
+        int mobility = 0;
+        int openFieldSwarm = 0;
+        int pinchTraps = 0;
+        boolean whiteInNW = evalPerimeter && (kSq != BoardConstants.THRONE && kRow >= 4 && kCol <= 4);
+        boolean whiteInNE = evalPerimeter && (kSq != BoardConstants.THRONE && kRow >= 4 && kCol >= 4);
+        boolean whiteInSW = evalPerimeter && (kSq != BoardConstants.THRONE && kRow <= 4 && kCol <= 4);
+        boolean whiteInSE = evalPerimeter && (kSq != BoardConstants.THRONE && kRow <= 4 && kCol >= 4);
+
+        byte[] board = state.board;
+        for (int sq = 0; sq < BoardConstants.NUM_SQUARES; sq++) {
+            byte piece = board[sq];
+            if (piece == BoardConstants.EMPTY) {
+                continue;
+            }
+            int r = BoardConstants.row(sq);
+            int c = BoardConstants.col(sq);
+
+            if (piece == BoardConstants.BLACK) {
+                if (evalChains) {
+                    if (c + 1 < 9 && board[sq + 1] == BoardConstants.BLACK) {
+                        connectedChains++;
+                    }
+                    if (r + 1 < 9) {
+                        if (board[sq + 9] == BoardConstants.BLACK) {
+                            connectedChains++;
+                        }
+                        if (c + 1 < 9 && board[sq + 10] == BoardConstants.BLACK) {
+                            connectedChains++;
+                        }
+                        if (c - 1 >= 0 && board[sq + 8] == BoardConstants.BLACK) {
+                            connectedChains++;
+                        }
+                    }
+                }
+                if (evalMobility) {
+                    int fromCamp = BoardConstants.CAMP_ID[sq];
+                    if (c + 1 < 9 && isBlackStepLegal(board, fromCamp, sq + 1)) mobility++;
+                    if (c - 1 >= 0 && isBlackStepLegal(board, fromCamp, sq - 1)) mobility++;
+                    if (r + 1 < 9 && isBlackStepLegal(board, fromCamp, sq + 9)) mobility++;
+                    if (r - 1 >= 0 && isBlackStepLegal(board, fromCamp, sq - 9)) mobility++;
+                }
+                if (evalOpenField) {
+                    int dist = Math.abs(r - kRow) + Math.abs(c - kCol);
+                    if (dist <= 4) {
+                        openFieldSwarm += (5 - dist);
+                    }
+                }
+            } else if (piece == BoardConstants.WHITE) {
+                if (evalPinchTraps) {
+                    if (c + 1 < 9 && BoardConstants.IS_CAMP[sq + 1]) {
+                        if (c - 1 >= 0 && board[sq - 1] == BoardConstants.EMPTY && !BoardConstants.IS_CAMP[sq - 1] && sq - 1 != BoardConstants.THRONE) {
+                            if (TacticalCutoffs.canBlackSlideTo(state, sq - 1)) {
+                                pinchTraps++;
+                            }
+                        }
+                    }
+                    if (c - 1 >= 0 && BoardConstants.IS_CAMP[sq - 1]) {
+                        if (c + 1 < 9 && board[sq + 1] == BoardConstants.EMPTY && !BoardConstants.IS_CAMP[sq + 1] && sq + 1 != BoardConstants.THRONE) {
+                            if (TacticalCutoffs.canBlackSlideTo(state, sq + 1)) {
+                                pinchTraps++;
+                            }
+                        }
+                    }
+                    if (r + 1 < 9 && BoardConstants.IS_CAMP[sq + 9]) {
+                        if (r - 1 >= 0 && board[sq - 9] == BoardConstants.EMPTY && !BoardConstants.IS_CAMP[sq - 9] && sq - 9 != BoardConstants.THRONE) {
+                            if (TacticalCutoffs.canBlackSlideTo(state, sq - 9)) {
+                                pinchTraps++;
+                            }
+                        }
+                    }
+                    if (r - 1 >= 0 && BoardConstants.IS_CAMP[sq - 9]) {
+                        if (r + 1 < 9 && board[sq + 9] == BoardConstants.EMPTY && !BoardConstants.IS_CAMP[sq + 9] && sq + 9 != BoardConstants.THRONE) {
+                            if (TacticalCutoffs.canBlackSlideTo(state, sq + 9)) {
+                                pinchTraps++;
+                            }
+                        }
+                    }
+                }
+                if (evalPerimeter) {
+                    if (r >= 4 && c <= 4) whiteInNW = true;
+                    if (r >= 4 && c >= 4) whiteInNE = true;
+                    if (r <= 4 && c <= 4) whiteInSW = true;
+                    if (r <= 4 && c >= 4) whiteInSE = true;
+                }
+            }
+        }
+
         score += connectedChains * weights.blackConnectedChains;
-
-        // 7. Active Black Mobility
-        if (weights.blackMobility > 0) {
-            int mobility = computeBlackMobility(state);
-            score += mobility * weights.blackMobility;
-        }
-
-        // 8. Open-Field King Strangling (Active when King leaves central 3x3 region)
-        if (distFromCenter >= 2 && weights.kingOpenFieldContainment > 0) {
-            int openFieldSwarm = computeOpenFieldContainment(state, kRow, kCol);
-            score += openFieldSwarm * weights.kingOpenFieldContainment;
-        }
-
-        // 9. Active Camp-Wall Pinch Traps (Phase 12 Pillar 3)
-        if (weights.campPinchTraps > 0) {
-            int pinchTraps = computeCampPinchTraps(state);
-            score += pinchTraps * weights.campPinchTraps;
-        }
+        score += mobility * weights.blackMobility;
+        score += openFieldSwarm * weights.kingOpenFieldContainment;
+        score += pinchTraps * weights.campPinchTraps;
 
         // 10. Active Empty-Throne Anvil Threats (Phase 12 Pillar 3)
-        if (weights.throneAnvilThreats > 0 && state.board[BoardConstants.THRONE] == BoardConstants.EMPTY) {
+        if (weights.throneAnvilThreats > 0 && board[BoardConstants.THRONE] == BoardConstants.EMPTY) {
             int blackThroneThreats = computeBlackThroneAnvilThreats(state);
             score += blackThroneThreats * weights.throneAnvilThreats;
         }
 
         // 11. Camp Perimeter Integrity: penalty for abandoning outer camp corners (Phase 14 / P4)
-        if (weights.campPerimeterIntegrityPenalty > 0) {
-            int abandonedCorners = countAbandonedCampCorners(state, kSq, kRow, kCol);
+        if (evalPerimeter) {
+            int abandonedCorners = 0;
+            if (whiteInNW) {
+                if (board[CORNER_D9] != BoardConstants.BLACK) abandonedCorners++;
+                if (board[CORNER_A6] != BoardConstants.BLACK) abandonedCorners++;
+            }
+            if (whiteInNE) {
+                if (board[CORNER_F9] != BoardConstants.BLACK) abandonedCorners++;
+                if (board[CORNER_I6] != BoardConstants.BLACK) abandonedCorners++;
+            }
+            if (whiteInSW) {
+                if (board[CORNER_D1] != BoardConstants.BLACK) abandonedCorners++;
+                if (board[CORNER_A4] != BoardConstants.BLACK) abandonedCorners++;
+            }
+            if (whiteInSE) {
+                if (board[CORNER_F1] != BoardConstants.BLACK) abandonedCorners++;
+                if (board[CORNER_I4] != BoardConstants.BLACK) abandonedCorners++;
+            }
             score -= abandonedCorners * weights.campPerimeterIntegrityPenalty;
         }
 
         return score;
+    }
+
+    /**
+     * Evaluates the 8-point Rhombus blockade with non-linear closure bonus when >= 7 vertices
+     * are occupied (THoR insight) and 50% attenuation in low-material endgames when blackCount < 10
+     * (brAInmates insight, Phase 15 Pillar 4).
+     */
+    public static int evaluateRhombusBlockade(FastState state, HeuristicWeights weights) {
+        int rhombusCount = countRhombusPositions(state);
+        int rhombusScore = rhombusCount * weights.rhombusBlockade;
+        if (rhombusCount >= 7) {
+            rhombusScore += (rhombusCount == 8 ? 3 : 2) * weights.rhombusBlockade;
+        }
+        if (state.blackCount < 10) {
+            rhombusScore /= 2;
+        }
+        return rhombusScore;
     }
 
     /**

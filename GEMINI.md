@@ -225,6 +225,8 @@ Development follows progressive, pedagogical phases: from basic data structures 
 - [x] **Phase 12: Tactical Safeguards, King Shield Cohesion & Deep Learning Integration (Learnings from Luca's MCTS/CNN)** (Completed: Score-bounded analytic mate/escape cutoffs in $O(1)$, King-Defender shield cohesion & quadratic dispersion penalty, compound spatial interaction features with corridor safety 75% discount, dynamic empirical effective branching $b_{\text{eff}} = \text{clamp}(2.2, 4.5, T_d / T_{d-1})$, singular tactical extensions in PVS, SVD/PCA feature covariance audit tool, and 100% verified via `Phase12OptimizationsTest.java`).
 - [x] **Phase 13: Tactical Refinements, Opening Book Sanitation & 2-Slot TT Scaling (Learnings from Luca's Architecture & 15s Benchmark)** (Completed: Opening book line 1 suicide sanitization, proactive 2-step King escape gradient `SAFE_FORKS`, root anti-hanging tie-breaker, 2-slot bucket TT with always-replace fallback, table scaling to $2^{23}$ entries / 134 MB, verified with 100% pass across all 14 unit test suites).
 - [x] **Phase 14: Post-Autopsy Tactical Hardening & Opening Counter-Strategies** (Completed: P1 Throne abandonment penalty in `WhiteHeuristics.java`, P2 Late Move Reductions (LMR) in `SearchEngine.java` & `ParallelSearchEngine.java`, P3 Quiescence Search tactical extensions for distance $\le 2$ escape maneuvers, P4 Camp perimeter integrity penalty in `BlackHeuristics.java`, P5 `OpeningBook.java` counter-lines vs Luca `d1d3` & brAInmates `f1f4` + Epsilon-Greedy $80/20$ stochastic selection, case-insensitive regex fix in `scripts/mine_openings.py`, 100% verified via `Phase14TacticalHardeningTest.java`).
+- [x] **Phase 15: Final Pre-Freeze Performance, Tactical Optimizations & White Hardening** (Completed: Pillar 1 `ParallelSearchEngine` best-worker adoption `chooseBestWorker`, `aspirationDelta = 120` parity, `useContempt`, zero-allocation root buffers, and irreversible capture repetition reset `lastCapturePly`; Pillar 2 inter-turn history aging & killer ply shifting `prepareNextSearch()`, root move sorting by minimax score `sortRootByScores`, King escape-advance move ordering bonus, and full tactical sorting in `QuiescenceSearch`; Pillar 3 single-pass 81-square loop fusion in `WhiteHeuristics` & `BlackHeuristics`; Pillar 4 `brAInmates` `PROTECTION_KING` counter-flank defense, `THoR` non-linear Rhombus closure bonus $\ge 7$ & endgame attenuation $< 10$, and zero-allocation incremental `leavesFriendlyPieceHanging`; Pillar 5 Opening book sanitization (`startPly` filter eliminating Turn-1 `e4d4` self-hanging and adding `i4e4` Black counter-punishment), static evaluation re-balancing (`whitePiece = 320` eliminating $-1154$ deficit to $-106$), proactive Throne safe fork & single-runway escape gradients, and perimeter anti-stranding penalty, achieving 100% test pass (38/38) and decisive match victory as White against Phase 14 on `Server.jar`).
+- [x] **Phase 16: Pre-Freeze Code Freeze & Grand Slam Competitor Benchmark (brAInmates, THoR, Luca)** (Completed: 5.5 / 6.0 points, 91.7% score at 30s/move on official `Server.jar` with 0 losses; Java engine declared officially frozen, subsequent development exclusively focused on offline SPSA parameter optimization).
 
 ---
 
@@ -741,6 +743,77 @@ python scripts/apply_weights.py
   - `src/tablut/engine/TranspositionTable.java`: Scaled to $2^{23}$ entries (134 MB) with 2-slot bucket architecture (depth-preferred Slot 0, always-replace Slot 1).
   - `src/tablut/engine/FeatureMatrixGenerator.java`: Updated to export all 22 features in covariance matrices.
   - `src/tablut/engine/Phase13RefinementsTest.java`: Complete 5-test validation passing 100%.
+
+---
+
+### Phase 14: Post-Autopsy Tactical Hardening & Opening Counter-Strategies [COMPLETED]
+* **Educational & Competitive Objective:** Eliminate remaining blind spots exposed in the 60s/move benchmarking tournament against UNIBO rivals (brAInmates, THoR, Luca): premature Throne evacuations, quiet non-capture perimeter escapes, search depth horizon limits, camp corner abandonment, and deterministic opening traps.
+* **Delivered Components & Architectural Enhancements:**
+  1. **Pillar 1: Throne Shelter & Anti-Premature King Exit (`WhiteHeuristics.java` & `HeuristicWeights.java`):**
+     - Implemented `kingThroneAbandonPenalty` (calibrated to **423 points** via SPSA overnight tuning).
+     - Penalizes any voluntary King exit from `e5` to the open field unless `openCorridors > 0` or `safeForks > 0`.
+     - In open field, the King requires only 2 custodian attackers (vs 4 in the Throne); retaining Throne shelter prevents catastrophic mid-game encirclement.
+  2. **Pillar 2: Late Move Reductions (LMR) in PVS (`SearchEngine.java` & `ParallelSearchEngine.java`):**
+     - Implemented logarithmic reduction for quiet moves ($i \ge 3$, depth $d \ge 3$):
+       $$R = \text{clamp}\left(1, d - 2, \left\lfloor 0.75 + \frac{\ln(d) \cdot \ln(i)}{2.25} \right\rfloor\right)$$
+     - Protected critical tactical moves: checks / threats on King (`isKingThreat`, `kingThreatenedAtEntry`), single extensions, and captures are never reduced.
+     - Full re-search on fail-high ($score > \alpha$). Cold TT search shows **39.2% node reduction**, boosting tournament depth from Depth 7-8 to **Depth 11-12** (processing 45M to 67M nodes in ~28s).
+  3. **Pillar 3: Quiescence Tactical Extension for Quiet Escape Maneuvers (`QuiescenceSearch.java`):**
+     - Extended Quiescence Search beyond captures to evaluate quiet King moves approaching perimeter escapes within Chebyshev/Manhattan distance $\le 2$ or creating `safeForks >= 1` (up to $d_{QS} \le 2$).
+     - Completely eliminates horizon blindness to quiet 8-ply King escorts (such as THoR G2).
+  4. **Pillar 4: Camp Perimeter Flank Integrity (`BlackHeuristics.java` & `HeuristicWeights.java`):**
+     - Added `campPerimeterIntegrityPenalty` (**31 points** via SPSA overnight tuning) evaluating the 8 outer camp corners (`a4, a6, i4, i6, d1, f1, d9, f9`).
+     - Penalizes Black vacating these corners while White pieces operate in the corresponding quadrant, preventing irreversible perimeter leaks.
+  5. **Pillar 5: Opening Book Sanitation, Asphyxiation Counters & Stochastic $\varepsilon$-Greedy (`OpeningBook.java` & `mine_openings.py`):**
+     - Fixed regex case-sensitivity in `scripts/mine_openings.py` to support uppercase coordinate logs (`E7 to D7`).
+     - Added canonical counter-lines: against Luca's $1. \dots d1d3$, responses $2. d4 \to c4!$ and $2. d5 \to d6!$; against brAInmates' $2. \dots f1f4$, consolidation $3. d2 \to d3!$.
+     - Implemented non-deterministic $\varepsilon$-greedy sampling ($80\%$ principal line, $20\%$ alternative high-quality canonical lines) via `new Random()`, preventing competitors from exploiting pre-computed static refutation trees.
+  6. **Pillar 6: 24-Parameter Vector & Overnight SPSA Optimization (`checkpoint_weights.json`):**
+     - Expanded heuristic vector to 24 parameters (`HeuristicWeights.NUM_WEIGHTS = 24`).
+     - Completed 97,316 games in RAM (iteration 1816 at Depth 4 with LMR), discovering major strategic shifts: White piece valuation raised to 189, Black camp front discipline raised to 69, and King Safe Fork threat solidified at 2941.
+  7. **Pillar 7: Comprehensive Regression Verification (`Phase14TacticalHardeningTest.java`):**
+     - Dedicated 5-test validation suite passing 100%.
+     - Full regression verified across all 15 test suites and official `RuleVerificationTest` (791 Black response branches, 0 violations).
+
+---
+
+### Phase 15: Final Pre-Freeze Performance & Tactical Optimizations (Cross-Competitor Synthesis) [COMPLETED]
+* **Educational & Competitive Objective:** Squeeze out all remaining algorithmic, memory, and tactical optimizations discovered during the final cross-audit of `competitors/brainmates`, `competitors/thor`, and `team/luca` (`commit b7f2d84`) prior to the tournament code freeze.
+* **Delivered 5-Pillar Architecture & Enhancements:**
+  1. **Pillar 1: Synchronization & Enhancement of `ParallelSearchEngine.java` & `SearchEngine.java`:**
+     - **Aspiration Window Parity (`aspirationDelta = 120`):** Aligned `ParallelSearchEngine.java` with `SearchEngine.java` (widened from `60` to `120` cp), eliminating redundant aspiration fail-high/fail-low re-searches under multi-threaded TT updates.
+     - **Best-Worker Adoption (`chooseBestWorker` / `isBetterWorkerResult`):** Because `HelperWorker` threads start at staggered depths (`1 + threadId % 2`) and permute root move ordering, a helper thread can complete depth $d+1$ (or discover a shorter forced mate) before `MasterWorker` finishes depth $d+1$ when the clock expires. `ParallelSearchEngine` now inspects all workers upon join and adopts any helper result that completed a strictly deeper iteration or found a faster forced mate, plus added early 1-ply mate root cutoff (`coordinator.stopped = true`) and `useContempt` parity in `ParallelSearchEngine` and `HelperWorker`.
+     - **Zero-Allocation Root Buffers:** Eliminated `new int[]` and `ArrayList` allocations inside `ParallelSearchEngine.search()`, `MasterWorker.runMasterSearch()`, and `HelperWorker.call()`, using preallocated per-worker arrays and `rootState.copyFrom(state)`.
+     - **Irreversible Capture Repetition Reset (`lastCapturePly`):** Since captures permanently reduce piece count on the board, no position prior to a capture can ever legally repeat in Ashton Tablut. Both `SearchEngine` and `ParallelSearchEngine` now track `lastCapturePly` down the search tree; whenever `lastCapturePly > 0`, `isRepetition` skips `gameHistory` completely and only scans `searchPath[lastCapturePly .. ply - 1]`.
+  2. **Pillar 2: Inter-Turn Persistence & Move Ordering (`MoveOrderer.java`, `SearchEngine.java`, `ParallelSearchEngine.java`, `QuiescenceSearch.java`):**
+     - **Inter-Turn History Aging & Killer Shifting (`MoveOrderer.prepareNextSearch()`):** Replaced full `clear()` between consecutive game turns with `prepareNextSearch()`, which ages `historyTable[f][t] >>>= 1` and shifts `killerMoves[p] = killerMoves[p + 2]` by 2 plies (preserving `clear()` for match resets and isolated unit tests).
+     - **Root Move Sorting by Minimax Scores (`sortRootByScores`):** At the end of each completed IDS depth $d$, `rootMoves` is stably sorted in descending order of `rootMoveScores` from depth $d$, ensuring depth $d+1$ explores moves in true minimax order for PVS and LMR.
+     - **King Escape-Advance & Slide Move Ordering Bonus:** In `MoveOrderer.scoreMove`, quiet King moves that reduce `MIN_DISTANCE_TO_ESCAPE[to] < MIN_DISTANCE_TO_ESCAPE[from]` receive `+(distFrom - distTo) * 4_000` and multi-square King slides receive `+slideDist * 500`, accelerating alpha-beta cutoffs on King breakouts.
+     - **Full In-Place Tactical Sorting in `QuiescenceSearch.java`:** Replaced the single best-move swap at index 0 with full descending insertion sort (`sortTacticalMoves`) over preallocated `qsScoreStack[qsDepth]` (`winning move > multi-capture > single capture > king advance/evasion > escort`).
+  3. **Pillar 3: Single-Pass Loop Fusion in `WhiteHeuristics.java` & `BlackHeuristics.java`:**
+     - Fused `computeKingDefenderShieldCohesion` and `computeWhitePawnDispersionPenalty` into a single 81-square pass in `WhiteHeuristics.evaluate`.
+     - Fused `countConnectedChains`, `computeBlackMobility`, `computeOpenFieldContainment`, `computeCampPinchTraps`, and `countAbandonedCampCorners` quadrant detection into a single 81-square pass in `BlackHeuristics.evaluate`, preserving exact mathematical equivalence and keeping all public helper methods intact.
+  4. **Pillar 4: Tactical Refinements (`PROTECTION_KING`, Dynamic Rhombus, Zero-Allocation Incremental Anti-Hanging):**
+     - **`PROTECTION_KING` Counter-Flank Defense (`WhiteHeuristics.evaluateKingVulnerability`):** Ingested `brAInmates`'s counter-flank protection insight: when the King in the open field has a hostile neighbor on one side and a friendly `WHITE` soldier directly occupying the opposite square, that axis cannot be custodian-captured (`0` flank threat) and increments `counterFlankProtection` to offset perpendicular vulnerability by 1 (while keeping double-hostile pins at $\ge 4$ for singular extensions).
+     - **Dynamic Rhombus Closure & Endgame Attenuation (`BlackHeuristics.evaluateRhombusBlockade`):** Added a non-linear closure bonus (`+2 * w` at 7 occupied squares, `+3 * w` at 8 occupied squares, `THoR` insight) and attenuated the static Rhombus bonus by 50% (`>> 1`) in low-material endgames (`blackCount < 10`, `brAInmates` insight) so remaining Black attackers prioritize active King pursuit over static perimeter stations.
+     - **Zero-Allocation Incremental `leavesFriendlyPieceHanging` (`SearchEngine.java`):** Refactored `leavesFriendlyPieceHanging` using a `ThreadLocal<HangingContext>` and 64-bit threatened-square bitmasks (`maskLo`/`maskHi`) with zero heap allocation, comparing pre-move vs post-move threats (`postMask & ~preMask`) and checking whether the moved piece itself hangs (`hungMoved`, Luca's `HangingGate` insight). Eliminates false positives when an unrelated friendly pawn was already threatened before the move.
+  5. **Pillar 5: Comprehensive Regression Suite (`Phase15FinalOptimizationsTest.java`):**
+     - Created `src/tablut/engine/Phase15FinalOptimizationsTest.java` with 36 assertions across 5 test methods verifying all 5 Pillars (including fail-soft QuiescenceSearch / PVS root score bounding, delayed forced-loss helper adoption, and double-hostile pin preservation $\ge 4$).
+     - Verified 100% pass across all 16 project test suites (`PerftTest`, `RuleVerificationTest`, `SearchEngineTest`, `ParallelSearchEngineTest`, `TranspositionTableTest`, `MoveOrdererTest`, `QuiescenceSearchTest`, `OpeningBookTest`, `HeuristicEvaluationTest`, `Phase6`..`Phase15`).
+
+---
+
+### Phase 16: Pre-Freeze Code Freeze & Grand Slam Competitor Benchmark [COMPLETED]
+* **Educational & Competitive Objective:** Certify the fully hardened engine against top competition, freeze the Java codebase, and transition all development cycles exclusively into automated SPSA weight optimization.
+* **Pre-Freeze Official 30s Tournament Benchmark:**
+  - Executed 6-game round-robin match via `scripts/tournament_vs_opponents.ps1` at 30 seconds per move on `Server.jar`:
+    - vs **brAInmates** (UNIBO 2020 Champion): **2.0 - 0.0 (100%)** (White won in 25 plies, Black won in 32 plies).
+    - vs **THoR** (UNIBO 2020 3rd Place): **1.5 - 0.5 (75%)** (White drew in 41 plies via fortress repetition, Black won in 26 plies).
+    - vs **Luca** (MLP Neural Evaluator): **2.0 - 0.0 (100%)** (White won in 59 plies, Black won in 32 plies).
+  - **Overall Score:** **5.5 / 6.0 points (91.7% win rate, 0 losses)**.
+* **Pre-Competition Code Freeze Declaration:**
+  - **FROZEN:** Move generation, game rules, bitboard structures, tree search, pruning algorithms, thread coordination, opening book definitions, and heuristic formulas are permanently locked.
+  - **ACTIVE VECTOR:** All compute power from here forward is dedicated to running multi-night SPSA heuristic tuning (`python scripts/train_overnight.py` / `python scripts/tune_spsa.py`) to fine-tune the 24 numerical parameters in `HeuristicWeights.java` and `checkpoint_weights.json`.
 
 ---
 

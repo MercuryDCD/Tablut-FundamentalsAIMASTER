@@ -228,6 +228,15 @@ public final class OpeningBook {
      * Adds an opening line specified as a sequence of UCI move strings (e.g., "e3d3", "e8e7").
      */
     public void addLine(String[] uciMoves, int initialWeight) {
+        addLine(uciMoves, initialWeight, 0);
+    }
+
+    /**
+     * Adds an opening line starting book entry recording from startPly.
+     * Moves at index i < startPly are executed on the scratch state to reach the target branch
+     * without recording earlier opponent-only setup moves into our own repertoire.
+     */
+    public void addLine(String[] uciMoves, int initialWeight, int startPly) {
         FastState state = new FastState();
         UndoInfo undo = new UndoInfo();
 
@@ -242,11 +251,16 @@ public final class OpeningBook {
             }
 
             int move = Move.encode(from, to);
+            if (!isMoveLegal(state, move)) {
+                throw new IllegalArgumentException("Illegal opening move at ply " + i + ": " + uci);
+            }
 
-            // Record book move for state before making the move
-            long hash = state.zobristHash;
-            int weight = Math.max(1, initialWeight - i * 5);
-            addEntry(hash, move, weight);
+            if (i >= startPly) {
+                // Record book move for state before making the move
+                long hash = state.zobristHash;
+                int weight = Math.max(1, initialWeight - i * 5);
+                addEntry(hash, move, weight);
+            }
 
             state.makeMove(move, undo);
         }
@@ -282,187 +296,200 @@ public final class OpeningBook {
      * All lines are automatically expanded 8-fold across all D4 dihedral symmetries.
      */
     private void loadCanonicalOpenings() {
-        // Line 0A: Inner Cross Lateral Expansion (e4 -> d4) - Robust against anvil traps
-        // White opens the southern flank corridor without exposing e3 or e4 to hostile camp anvils.
-        // If Black plays conservative flank clamps (e2 -> c2), White advances d4 -> c4 to construct an unblockable runway.
+        // Line 0A: Opponent plays 1. e4 -> d4, Black conservative flank clamp (e2 -> c2)
+        // startPly = 1 so White never initiates 1. e4 -> d4 (which hangs e3 to i4 -> e4).
         addLine(new String[] {
             "e4d4", "e2c2", "d4c4", "f1f3", "d5d6"
-        }, 130);
+        }, 125, 1);
 
-        // Line 0B: Inner Cross Lateral Expansion (e4 -> d4), Black pin response (i4 -> e4)
-        // White anchors d4 -> d2, parrying the flank probe and consolidating the central defense.
+        // Line 0B: Tactical Black Punishment when opponent plays 1. e4 -> d4
+        // Black immediately plays 1... i4 -> e4, capturing e3 against the e2 camp anvil!
         addLine(new String[] {
-            "e4d4", "i4e4", "d4d2", "h5h3", "d2d3"
-        }, 125);
+            "e4d4", "i4e4"
+        }, 135, 1);
 
-        // Line 0C: Tactical Punishment against opponent playing e3 -> d3 as White
-        // If opponent plays e3 -> d3 as White, Antigravity playing Black immediately punishes with e2 -> e3,
-        // capturing White's cross pawn on e4 against the Throne anvil!
+        // Line 0C: Immediate White recapture (2. f5 -> f3) when opponent Black plays 1... e2 -> e3 after 1. e3 -> d3.
+        // startPly = 2 so our Black never plays 1... e2 -> e3 (which hangs e3 and vacates the e2 camp doorway),
+        // while our White immediately recaptures 2. f5 -> f3 whenever an opponent Black plays 1... e2 -> e3!
         addLine(new String[] {
-            "e3d3", "e2e3", "d5d6", "b5b7", "c5c7"
-        }, 125);
+            "e3d3", "e2e3", "f5f3"
+        }, 160, 2);
 
-        // Line 1: Standard White flank evacuation (e3 -> d3), Black Rhombus response (e2 -> c2)
-        // Sanitized (Phase 13 Pillar 1): White clears cross pawns e4 -> f4, anchors d5 -> d6; King remains on Throne
+        // Line 0D: Tactical Black Punishment when opponent White plays 2-square outer-cross moves (c5c7, c5c3, g5g7, g5g3)
+        // Black immediately steps 1... b5 -> c5 (or h5 -> g5), capturing d5 (or f5) against the Throne anvil with no recapture!
+        addLine(new String[] {
+            "c5c7", "b5c5"
+        }, 150, 1);
+        addLine(new String[] {
+            "c5c3", "b5c5"
+        }, 150, 1);
+        addLine(new String[] {
+            "g5g7", "h5g5"
+        }, 150, 1);
+        addLine(new String[] {
+            "g5g3", "h5g5"
+        }, 150, 1);
+
+        // Line 1: Opponent White flank development (e3 -> d3), Black Rhombus response (e2 -> c2)
+        // startPly = 1 so White initiates outer-cross 1-square lines (e7f7, e7d7, c5c4, g5g6) that avoid
+        // the 1... e2 -> e3 / 2... f9 -> f5 counter-capture trap against e4/g5.
         addLine(new String[] {
             "e3d3", "e2c2", "e4f4", "e8g8", "d5d6", "b5b7"
-        }, 120);
+        }, 140, 1);
 
         // Line 2: Match line vs teammate Luca (Game 1): White e3 -> d3, Black camp pin f1 -> f3
-        // White immediately counters with d5 -> d6; Black responds e8 -> g8; White clears e6 -> g6
+        // White immediately counters with d5 -> d6; Black responds e8 -> g8; White safely clears e4 -> f4
         addLine(new String[] {
-            "e3d3", "f1f3", "d5d6", "e8g8", "e6g6", "b5b7"
-        }, 115);
+            "e3d3", "f1f3", "d5d6", "e8g8", "e4f4", "b5b7"
+        }, 125, 2);
 
-        // Line 3: Match line vs teammate Luca (Game 2): White e3 -> d3, Black e2 -> c2, White e6 -> f6
-        // Black seals northern Rhombus with e8 -> g8; White advances d5 -> d6; Black clamps b5 -> b7
+        // Line 3: Match line vs teammate Luca (Game 2): White e3 -> d3, Black e2 -> c2, opponent White e6 -> f6
+        // startPly = 3 so our White never plays premature e6 -> f6, while Black still seals northern Rhombus with e8 -> g8
         addLine(new String[] {
             "e3d3", "e2c2", "e6f6", "e8g8", "d5d6", "b5b7"
-        }, 115);
+        }, 115, 3);
 
         // Line 4: White e3 -> d3, Black e2 -> c2, White aggressive corridor push c5 -> c7
-        // Black clamps b5 -> b7; White clears e6 -> f6; Black reinforces e8 -> g8
+        // Black clamps b5 -> b7; White safely clears e4 -> f4; Black reinforces e8 -> g8
         addLine(new String[] {
-            "e3d3", "e2c2", "c5c7", "b5b7", "e6f6", "e8g8"
-        }, 110);
+            "e3d3", "e2c2", "c5c7", "b5b7", "e4f4", "e8g8"
+        }, 110, 2);
 
         // Line 5: White e3 -> d3, Black e2 -> c2, White diamond advancement d5 -> d6
         // Black establishes west Rhombus b5 -> b7; White opens c5 -> c7; Black balances e8 -> g8
         addLine(new String[] {
             "e3d3", "e2c2", "d5d6", "b5b7", "c5c7", "e8g8"
-        }, 110);
+        }, 110, 2);
 
         // Line 6: White e3 -> d3, Black conservative camp step d1 -> d2
         // White opens d5 -> d6; Black anchors e8 -> g8; White opens c5 -> c7; Black clamps b5 -> b7
         addLine(new String[] {
             "e3d3", "d1d2", "d5d6", "e8g8", "c5c7", "b5b7"
-        }, 105);
+        }, 105, 2);
 
         // Line 7: White e3 -> d3, Black early flank clamp b5 -> b7
-        // White counters with d5 -> d6; Black sets southern Rhombus e2 -> c2; White clears e6 -> g6
+        // White counters with d5 -> d6; Black sets southern Rhombus e2 -> c2; White safely clears e4 -> f4
         addLine(new String[] {
-            "e3d3", "b5b7", "d5d6", "e2c2", "e6g6", "e8g8"
-        }, 105);
+            "e3d3", "b5b7", "d5d6", "e2c2", "e4f4", "e8g8"
+        }, 105, 2);
 
         // Line 8: White e3 -> d3, Black early flank clamp h5 -> h3
-        // White counters with d5 -> d6; Black sets southern Rhombus e2 -> c2; White clears e6 -> f6
+        // White counters with d5 -> d6; Black sets southern Rhombus e2 -> c2; White safely clears e4 -> f4
         addLine(new String[] {
-            "e3d3", "h5h3", "d5d6", "e2c2", "e6f6", "e8g8"
-        }, 105);
+            "e3d3", "h5h3", "d5d6", "e2c2", "e4f4", "e8g8"
+        }, 105, 2);
 
-        // Line 9: White central clearance (e3 -> d3), Black axial reinforcement (e8 -> e7)
-        // Sanitized (Phase 13 Pillar 1): White advances d5 -> d6 while King stays anchored
+        // Line 9: White central clearance (e3 -> d3), Black axial reinforcement (d9 -> d7)
+        // Sanitized: White advances e4 -> e3 and d5 -> d6 while King stays anchored
         addLine(new String[] {
-            "e3d3", "e8e7", "e4e3", "b5c5", "d5d6", "e2c2"
-        }, 100);
+            "e3d3", "d9d7", "e4e3", "b5b7", "d5d6", "e2c2"
+        }, 100, 2);
 
-        // Line 10: White northern lateral release (e7 -> f7), Black Rhombus response (e8 -> g8)
+        // Line 10: Primary White northern lateral release (e7 -> f7), Black Rhombus response (e8 -> g8)
         // Sanitized (Phase 13 Pillar 1): White clears f5 -> f6 while King stays anchored
         addLine(new String[] {
             "e7f7", "e8g8", "e6d6", "e2c2", "f5f6", "b5b7"
-        }, 110);
+        }, 145);
 
-        // Line 11: White symmetric northern release (e7 -> f7), Black southern axis (e2 -> e3)
-        // Sanitized (Phase 13 Pillar 1): White clears d5 -> d6
+        // Line 11: White symmetric northern release (e7 -> f7), Black southern axis (d1 -> d3)
+        // Sanitized: White clears e6 -> e7 and d5 -> d6
         addLine(new String[] {
-            "e7f7", "e2e3", "e6e7", "h5g5", "d5d6", "e8g8"
-        }, 95);
+            "e7f7", "d1d3", "e6e7", "h5h3", "d5d6", "e8g8"
+        }, 95, 2);
 
-        // Line 12: White northern flank clearance (e7 -> d7), Black Rhombus response (e8 -> g8)
+        // Line 12: Primary White northern flank clearance (e7 -> d7), Black Rhombus response (e8 -> g8)
         // Sanitized (Phase 13 Pillar 1): White clears f5 -> f6
         addLine(new String[] {
             "e7d7", "e8g8", "e6d6", "e2c2", "f5f6", "b5b7"
-        }, 110);
+        }, 145);
 
-        // Line 13: White northern flank clearance (e7 -> d7), Black southern axis (e2 -> e3)
-        // Sanitized (Phase 13 Pillar 1): White clears f5 -> f6
+        // Line 13: White northern flank clearance (e7 -> d7), Black southern axis (f1 -> f3)
+        // Sanitized: White clears e6 -> e7 and f5 -> f6
         addLine(new String[] {
-            "e7d7", "e2e3", "e6e7", "a5b5", "f5f6", "e8g8"
-        }, 95);
+            "e7d7", "f1f3", "e6e7", "b5b7", "f5f6", "e8g8"
+        }, 95, 2);
 
-        // Line 14: White west cross clearance (c5 -> c4), Black Rhombus flank containment (b5 -> b7)
+        // Line 14: Primary White west cross clearance (c5 -> c4), Black Rhombus flank containment (b5 -> b7)
         // Sanitized (Phase 13 Pillar 1): White clears f5 -> f6
         addLine(new String[] {
             "c5c4", "b5b7", "d5d6", "e2c2", "f5f6", "e8g8"
-        }, 105);
+        }, 145);
 
-        // Line 15: White west cross corridor push (c5 -> c7), Black Rhombus clamp (b5 -> b7)
+        // Line 15: Opponent White 2-square west push (c5 -> c7), Black Rhombus clamp fallback (startPly = 2)
         addLine(new String[] {
             "c5c7", "b5b7", "e7f7", "e2c2", "d5d6", "e8g8"
-        }, 105);
+        }, 105, 2);
 
-        // Line 16: White south-west cross clearance (c5 -> c3), Black containment (b5 -> b3)
+        // Line 16: Opponent White 2-square south-west push (c5 -> c3), Black containment fallback (startPly = 2)
         addLine(new String[] {
             "c5c3", "b5b3", "e3d3", "e8g8", "d5d4"
-        }, 100);
+        }, 100, 2);
 
-        // Line 17: White east cross clearance (g5 -> g6), Black Rhombus flank containment (h5 -> h3)
+        // Line 17: Primary White east cross clearance (g5 -> g6), Black Rhombus flank containment (h5 -> h3)
         // Sanitized (Phase 13 Pillar 1): White clears d5 -> d6
         addLine(new String[] {
             "g5g6", "h5h3", "f5f4", "e8g8", "d5d6", "b5b7"
-        }, 105);
+        }, 145);
 
-        // Line 18: White east cross corridor push (g5 -> g7), Black Rhombus clamp (h5 -> h7)
+        // Line 18: Opponent White 2-square east push (g5 -> g7), Black Rhombus clamp fallback (startPly = 2)
         addLine(new String[] {
             "g5g7", "h5h7", "e7d7", "e2c2", "f5f6", "e8g8"
-        }, 105);
+        }, 105, 2);
 
-        // Line 19: White south-east cross clearance (g5 -> g3), Black containment (h5 -> h3)
+        // Line 19: Opponent White 2-square south-east push (g5 -> g3), Black containment fallback (startPly = 2)
         addLine(new String[] {
             "g5g3", "h5h3", "e3f3", "e8g8", "f5f4"
-        }, 100);
+        }, 100, 2);
 
-        // Line 20: White diamond construction d5 -> d6, Black perimeter clamp a4 -> b4
-        // Sanitized (Phase 13 Pillar 1): White clears f5 -> f4
+        // Line 20: Opponent White plays 1. d5 -> d6; Black perimeter clamp a4 -> b4 (startPly = 1)
         addLine(new String[] {
             "d5d6", "a4b4", "e3d3", "e8g8", "f5f4"
-        }, 95);
+        }, 95, 1);
 
-        // Line 21: White diamond construction f5 -> f4, Black perimeter clamp i6 -> h6
-        // Sanitized (Phase 13 Pillar 1): White clears d5 -> d6
+        // Line 21: Opponent White plays 1. f5 -> f4; Black perimeter clamp i6 -> h6 (startPly = 1)
         addLine(new String[] {
             "f5f4", "i6h6", "e7f7", "e2c2", "d5d6"
-        }, 95);
+        }, 95, 1);
 
         // Line 22: White horizontal clearance c5 -> c4, Black western blockade a4 -> b4
-        // Sanitized (Phase 13 Pillar 1): White clears f5 -> f6
+        // Sanitized: White clears d5 -> c5 and f5 -> f6
         addLine(new String[] {
-            "c5c4", "a4b4", "d5c5", "e9e8", "f5f6"
-        }, 90);
+            "c5c4", "a4b4", "d5c5", "e8g8", "f5f6"
+        }, 90, 1);
 
         // Line 23: White east clearance g5 -> g6, Black eastern clamp i6 -> h6
         // Sanitized (Phase 13 Pillar 1): White clears d5 -> d6
         addLine(new String[] {
             "g5g6", "i6h6", "f5g5", "d1d2", "d5d6"
-        }, 90);
+        }, 90, 1);
 
-        // Line 24: Classic defensive clearance e3 -> f3, Black response e8 -> e7
-        // Sanitized (Phase 13 Pillar 1): White clears d5 -> d6
+        // Line 24: Classic defensive clearance e3 -> f3, Black response f9 -> f7
+        // Sanitized: White clears e4 -> e3 and d5 -> d6
         addLine(new String[] {
-            "e3f3", "e8e7", "e4e3", "h5g5", "d5d6"
-        }, 90);
+            "e3f3", "f9f7", "e4e3", "h5h3", "d5d6"
+        }, 90, 1);
 
-        // Line 25: Counter vs Luca's flank probe d1 -> d3: White responds 2. d4 -> c4!
+        // Line 25: Counter vs Luca's flank probe d1 -> d3 after 1. e4d4: White responds 2. d4 -> c4! (startPly = 2)
         // Prevents Black clamp on c4 and opens lateral runway while King remains secure on Throne
         addLine(new String[] {
             "e4d4", "d1d3", "d4c4", "e8g8", "d5d6", "b5b7"
-        }, 125);
+        }, 125, 2);
 
-        // Line 26: Counter vs Luca's flank probe d1 -> d3: Alternative White response 2. d5 -> d6!
+        // Line 26: Counter vs Luca's flank probe d1 -> d3 after 1. e4d4: Alternative White response 2. d5 -> d6! (startPly = 2)
         // Constructs central diamond bastion while King remains secure on Throne
         addLine(new String[] {
             "e4d4", "d1d3", "d5d6", "e8g8", "d4c4", "b5b7"
-        }, 120);
+        }, 120, 2);
 
-        // Line 27: Counter vs UNIBO Champion brAInmates' flank probe f1 -> f4: White responds 3. d2 -> d3!
+        // Line 27: Counter vs UNIBO Champion brAInmates' flank probe f1 -> f4: White responds 3. d2 -> d3! (startPly = 4)
         // Empirical holding line from real tournament play (achieved Draw vs brAInmates)
         addLine(new String[] {
             "e4d4", "i4e4", "d4d2", "f1f4", "d2d3", "i6f6"
-        }, 125);
+        }, 125, 4);
 
-        // Line 28: Alternative vs brAInmates' f1 -> f4: White 3. d2 -> d3! followed by Black b5 -> b7
+        // Line 28: Alternative vs brAInmates' f1 -> f4: White 3. d2 -> d3! followed by Black b5 -> b7 (startPly = 4)
         addLine(new String[] {
             "e4d4", "i4e4", "d4d2", "f1f4", "d2d3", "b5b7"
-        }, 120);
+        }, 120, 4);
     }
 }

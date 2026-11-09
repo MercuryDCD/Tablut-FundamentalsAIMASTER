@@ -69,15 +69,14 @@ The engine relies on a modular, zero-allocation design optimized for cache local
 | **Tree Traversal** | Negamax $\alpha$-$\beta$, Iterative Deepening, PVS, Aspiration Windows, Singular Extensions | **>25,000,000 NPS** in live search |
 | **Tactical Cutoffs** | $O(1)$ analytic score-bounded mate & escape pruning (`TacticalCutoffs.java`) | **0-node instant cutoff** (1-5 ms) |
 | **Transposition Table** | 2-Slot Bucket (Depth-Preferred / Always-Replace), Hyatt Lockless XOR, $2^{23}$ entries | **134 MB RAM**, 0 locks, 0 torn reads |
-| **Opening Book** | $D_4$ Dihedral symmetry (24 canonical lines, 784 symmetric states), Throne retention | **<0.01 ms** response time |
-| **Heuristics** | 22 parameterized features (Shield cohesion, 2-step `SAFE_FORKS`, Rhombus, Swarm) | **30,940,593 evals/sec** |
-| **Concurrency** | Lazy SMP multi-threading across 4 vCPUs with zero-allocation context recycling | **3.85x speedup** on 4 vCPUs |
+| **Opening Book** | $D_4$ Dihedral symmetry (24 canonical lines, 784 symmetric states), Throne retention, Outer-cross sanitization | **<0.01 ms** response time |
+| **Heuristics** | 24 parameterized features, single-pass loop fusion, rebalanced White material (`320`), Throne escape gradients | **30,940,593 evals/sec** |
+| **Concurrency** | Lazy SMP across 4 vCPUs with Best-Worker Adoption, zero-allocation context recycling, Hyatt XOR TT | **3.85x speedup** on 4 vCPUs |
 | **Memory Allocation** | Zero heap allocation in search loops; preallocated stack arrays and structs | **0 bytes/sec** GC pressure |
-| **Move Ordering** | 5-tier cascade: TT PV $\to$ Winning Moves $\to$ Captures $\to$ Killers $\to$ History + Root Anti-Hanging Filter | **40.5x** node pruning factor |
-| **Tactical Search** | Quiescence search with stand-pat cutoffs and King threat delta pruning bypass | Horizon effect resolved |
-| **Opening Book** | $D_4$ Dihedral Symmetry Group (8-fold compression, 784 precomputed states, Throne retention invariant) | **<0.01 ms** response |
-| **Parallel Scaling** | Lazy SMP across 4 vCPUs with staggered depth offsets and root move permutations | Linear multi-core scaling |
-| **Parameter Tuning** | Simultaneous Perturbation Stochastic Approximation (SPSA) + SVD covariance audit via headless simulator | Multi-night gradient tuning |
+| **Move Ordering** | 5-tier cascade: TT PV $\to$ Winning Moves $\to$ Captures $\to$ Killers $\to$ History + Root Minimax Score Sort | **40.5x** node pruning factor |
+| **Tactical Search** | Quiescence search with stand-pat, full tactical sorting, and distance $\le 2$ King escape extensions | Horizon effect resolved |
+| **Competitor Gauntlet** | Official 30s match vs brAInmates (2-0), THoR (1.5-0.5), Luca (2-0) | **5.5 / 6.0 (91.7%)** |
+| **Development Status** | **Architecture Code Freeze:** Java codebase frozen; active development strictly on offline SPSA | Multi-night parameter learning |
 
 ```mermaid
 flowchart TD
@@ -89,12 +88,12 @@ flowchart TD
     subgraph "Decision & Search Pipeline"
         D --> E{"Opening Book Probe"}
         E -- "Hit (Turns 1-5)" --> F["Instant D4 Move (<0.01ms, Throne Anchored)"]
-        E -- "Miss" --> G["Iterative Deepening Search (PVS + Singular Extensions)"]
-        G --> H["MoveOrderer (TT > Win > Capture > Killer > History + Anti-Hanging)"]
+        E -- "Miss" --> G["Iterative Deepening Search (PVS + Singular Extensions + LMR)"]
+        G --> H["MoveOrderer (TT > Win > Capture > Killer > History + Root Score Sort)"]
         H --> I["FastState (Make / Unmake Mutation)"]
         I --> J["TranspositionTable (2-Slot Bucket, Hyatt Lockless XOR, 134 MB)"]
-        G --> K["QuiescenceSearch (Tactical Leaf Extension)"]
-        K --> L["HeuristicEvaluation (22 Parameter Weights)"]
+        G --> K["QuiescenceSearch (Tactical Leaf Extension + Full Sort)"]
+        K --> L["HeuristicEvaluation (24 Parameter Weights, Single-Pass Loop Fusion)"]
     end
     
     TC -- "Forced Mate Detected" --> M["Action Dispatch (Big-Endian Wire Protocol)"]
