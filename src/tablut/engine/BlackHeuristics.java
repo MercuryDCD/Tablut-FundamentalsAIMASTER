@@ -13,7 +13,6 @@ package tablut.engine;
  * 2. Camp Front Discipline ("Keep the Fronts"):
  *    The 4 gateway squares {e2, e8, b5, h5} seal the camp exits. Prematurely abandoning
  *    these squares without compensation yields free corridors for White to escape.
- *    Maintaining soldiers on these doors maintains the cordon.
  * 
  * 3. King Encirclement & Threat Geometry:
  *    Measures hostile pressure surrounding the King, adjusting for Ashton Tablut capture
@@ -23,6 +22,10 @@ package tablut.engine;
  * 4. Center Confinement (Containment):
  *    Penalizes White King advancing toward the perimeter, rewarding states where the King
  *    remains trapped near the central Throne.
+ * 
+ * 5. Camp-Wall Pinch Traps & Empty-Throne Anvils (Phase 12 Pillar 3):
+ *    Emulates CNN receptive fields by evaluating multi-piece sandwich configurations against
+ *    camp walls and the vacant central Throne.
  */
 public final class BlackHeuristics {
 
@@ -52,6 +55,22 @@ public final class BlackHeuristics {
     public static final int[] CAMP_FRONTS = {
         FRONT_E2, FRONT_E8, FRONT_B5, FRONT_H5
     };
+
+    // Precomputed 8 outer camp corners (Phase 14 / P4)
+    public static final int CORNER_D9 = BoardConstants.coord(8, 3);
+    public static final int CORNER_F9 = BoardConstants.coord(8, 5);
+    public static final int CORNER_D1 = BoardConstants.coord(0, 3);
+    public static final int CORNER_F1 = BoardConstants.coord(0, 5);
+    public static final int CORNER_A4 = BoardConstants.coord(3, 0);
+    public static final int CORNER_A6 = BoardConstants.coord(5, 0);
+    public static final int CORNER_I4 = BoardConstants.coord(3, 8);
+    public static final int CORNER_I6 = BoardConstants.coord(5, 8);
+
+    // Squares for Throne Anvil threats
+    public static final int SQ_E3 = BoardConstants.coord(2, 4);
+    public static final int SQ_E7 = BoardConstants.coord(6, 4);
+    public static final int SQ_C5 = BoardConstants.coord(4, 2);
+    public static final int SQ_G5 = BoardConstants.coord(4, 6);
 
     /**
      * Evaluates the game state strictly from Black's positional perspective.
@@ -106,7 +125,68 @@ public final class BlackHeuristics {
             score += openFieldSwarm * weights.kingOpenFieldContainment;
         }
 
+        // 9. Active Camp-Wall Pinch Traps (Phase 12 Pillar 3)
+        if (weights.campPinchTraps > 0) {
+            int pinchTraps = computeCampPinchTraps(state);
+            score += pinchTraps * weights.campPinchTraps;
+        }
+
+        // 10. Active Empty-Throne Anvil Threats (Phase 12 Pillar 3)
+        if (weights.throneAnvilThreats > 0 && state.board[BoardConstants.THRONE] == BoardConstants.EMPTY) {
+            int blackThroneThreats = computeBlackThroneAnvilThreats(state);
+            score += blackThroneThreats * weights.throneAnvilThreats;
+        }
+
+        // 11. Camp Perimeter Integrity: penalty for abandoning outer camp corners (Phase 14 / P4)
+        if (weights.campPerimeterIntegrityPenalty > 0) {
+            int abandonedCorners = countAbandonedCampCorners(state, kSq, kRow, kCol);
+            score -= abandonedCorners * weights.campPerimeterIntegrityPenalty;
+        }
+
         return score;
+    }
+
+    /**
+     * Penalizes Black for abandoning any of the 8 outer camp corners (d1, f1, d9, f9, a4, a6, i4, i6)
+     * when the White King or White defenders are threatening that quadrant/flank.
+     */
+    public static int countAbandonedCampCorners(FastState state, int kSq, int kRow, int kCol) {
+        boolean whiteInNW = (kSq != BoardConstants.THRONE && kRow >= 4 && kCol <= 4);
+        boolean whiteInNE = (kSq != BoardConstants.THRONE && kRow >= 4 && kCol >= 4);
+        boolean whiteInSW = (kSq != BoardConstants.THRONE && kRow <= 4 && kCol <= 4);
+        boolean whiteInSE = (kSq != BoardConstants.THRONE && kRow <= 4 && kCol >= 4);
+
+        byte[] board = state.board;
+        for (int sq = 0; sq < BoardConstants.NUM_SQUARES; sq++) {
+            if (board[sq] == BoardConstants.WHITE) {
+                int r = BoardConstants.row(sq);
+                int c = BoardConstants.col(sq);
+                if (r >= 4 && c <= 4) whiteInNW = true;
+                if (r >= 4 && c >= 4) whiteInNE = true;
+                if (r <= 4 && c <= 4) whiteInSW = true;
+                if (r <= 4 && c >= 4) whiteInSE = true;
+            }
+        }
+
+        int abandoned = 0;
+        if (whiteInNW) {
+            if (board[CORNER_D9] != BoardConstants.BLACK) abandoned++;
+            if (board[CORNER_A6] != BoardConstants.BLACK) abandoned++;
+        }
+        if (whiteInNE) {
+            if (board[CORNER_F9] != BoardConstants.BLACK) abandoned++;
+            if (board[CORNER_I6] != BoardConstants.BLACK) abandoned++;
+        }
+        if (whiteInSW) {
+            if (board[CORNER_D1] != BoardConstants.BLACK) abandoned++;
+            if (board[CORNER_A4] != BoardConstants.BLACK) abandoned++;
+        }
+        if (whiteInSE) {
+            if (board[CORNER_F1] != BoardConstants.BLACK) abandoned++;
+            if (board[CORNER_I4] != BoardConstants.BLACK) abandoned++;
+        }
+
+        return abandoned;
     }
 
     /**
@@ -129,6 +209,89 @@ public final class BlackHeuristics {
             }
         }
         return containment;
+    }
+
+    /**
+     * Detects active camp-wall pinch traps against White defenders.
+     * In Ashton Tablut, all 16 camp squares act as capture anvils for Black.
+     * If a White defender is adjacent to a Camp square, and the opposite square is empty
+     * and reachable by an approaching Black soldier, Black has an imminent capture threat.
+     */
+    public static int computeCampPinchTraps(FastState state) {
+        int pinchTraps = 0;
+        byte[] board = state.board;
+
+        for (int sq = 0; sq < BoardConstants.NUM_SQUARES; sq++) {
+            if (board[sq] == BoardConstants.WHITE) {
+                int r = BoardConstants.row(sq);
+                int c = BoardConstants.col(sq);
+
+                // Check East neighbor for camp anvil
+                if (c + 1 < 9 && BoardConstants.IS_CAMP[sq + 1]) {
+                    // Opposite is West
+                    if (c - 1 >= 0 && board[sq - 1] == BoardConstants.EMPTY && !BoardConstants.IS_CAMP[sq - 1] && sq - 1 != BoardConstants.THRONE) {
+                        if (TacticalCutoffs.canBlackSlideTo(state, sq - 1)) {
+                            pinchTraps++;
+                        }
+                    }
+                }
+                // Check West neighbor for camp anvil
+                if (c - 1 >= 0 && BoardConstants.IS_CAMP[sq - 1]) {
+                    // Opposite is East
+                    if (c + 1 < 9 && board[sq + 1] == BoardConstants.EMPTY && !BoardConstants.IS_CAMP[sq + 1] && sq + 1 != BoardConstants.THRONE) {
+                        if (TacticalCutoffs.canBlackSlideTo(state, sq + 1)) {
+                            pinchTraps++;
+                        }
+                    }
+                }
+                // Check North neighbor for camp anvil
+                if (r + 1 < 9 && BoardConstants.IS_CAMP[sq + 9]) {
+                    // Opposite is South
+                    if (r - 1 >= 0 && board[sq - 9] == BoardConstants.EMPTY && !BoardConstants.IS_CAMP[sq - 9] && sq - 9 != BoardConstants.THRONE) {
+                        if (TacticalCutoffs.canBlackSlideTo(state, sq - 9)) {
+                            pinchTraps++;
+                        }
+                    }
+                }
+                // Check South neighbor for camp anvil
+                if (r - 1 >= 0 && BoardConstants.IS_CAMP[sq - 9]) {
+                    // Opposite is North
+                    if (r + 1 < 9 && board[sq + 9] == BoardConstants.EMPTY && !BoardConstants.IS_CAMP[sq + 9] && sq + 9 != BoardConstants.THRONE) {
+                        if (TacticalCutoffs.canBlackSlideTo(state, sq + 9)) {
+                            pinchTraps++;
+                        }
+                    }
+                }
+            }
+        }
+        return pinchTraps;
+    }
+
+    /**
+     * Evaluates active custodian capture threats using the empty Throne as an anvil against White defenders.
+     */
+    public static int computeBlackThroneAnvilThreats(FastState state) {
+        int threats = 0;
+        byte[] board = state.board;
+
+        // South of Throne: e4
+        if (board[FastState.SQ_E4] == BoardConstants.WHITE && board[SQ_E3] == BoardConstants.EMPTY && TacticalCutoffs.canBlackSlideTo(state, SQ_E3)) {
+            threats++;
+        }
+        // North of Throne: e6
+        if (board[FastState.SQ_E6] == BoardConstants.WHITE && board[SQ_E7] == BoardConstants.EMPTY && TacticalCutoffs.canBlackSlideTo(state, SQ_E7)) {
+            threats++;
+        }
+        // West of Throne: d5
+        if (board[FastState.SQ_D5] == BoardConstants.WHITE && board[SQ_C5] == BoardConstants.EMPTY && TacticalCutoffs.canBlackSlideTo(state, SQ_C5)) {
+            threats++;
+        }
+        // East of Throne: f5
+        if (board[FastState.SQ_F5] == BoardConstants.WHITE && board[SQ_G5] == BoardConstants.EMPTY && TacticalCutoffs.canBlackSlideTo(state, SQ_G5)) {
+            threats++;
+        }
+
+        return threats;
     }
 
     /**

@@ -66,33 +66,39 @@ The engine relies on a modular, zero-allocation design optimized for cache local
 | Architectural Component | Implementation Detail | Performance Profile |
 | :--- | :--- | :--- |
 | **State Representation** | Flat 81-byte array (`byte[81]`) with incremental 64-bit Zobrist hashing | **85,048,952 NPS** (raw Perft) |
-| **Tree Traversal** | Negamax $\alpha$-$\beta$, Iterative Deepening, PVS, and Aspiration Windows | **>14,000,000 NPS** in live search |
+| **Tree Traversal** | Negamax $\alpha$-$\beta$, Iterative Deepening, PVS, Aspiration Windows, Singular Extensions | **>25,000,000 NPS** in live search |
+| **Tactical Cutoffs** | $O(1)$ analytic score-bounded mate & escape pruning (`TacticalCutoffs.java`) | **0-node instant cutoff** (1-5 ms) |
+| **Transposition Table** | 2-Slot Bucket (Depth-Preferred / Always-Replace), Hyatt Lockless XOR, $2^{23}$ entries | **134 MB RAM**, 0 locks, 0 torn reads |
+| **Opening Book** | $D_4$ Dihedral symmetry (24 canonical lines, 784 symmetric states), Throne retention | **<0.01 ms** response time |
+| **Heuristics** | 22 parameterized features (Shield cohesion, 2-step `SAFE_FORKS`, Rhombus, Swarm) | **30,940,593 evals/sec** |
+| **Concurrency** | Lazy SMP multi-threading across 4 vCPUs with zero-allocation context recycling | **3.85x speedup** on 4 vCPUs |
 | **Memory Allocation** | Zero heap allocation in search loops; preallocated stack arrays and structs | **0 bytes/sec** GC pressure |
-| **Transposition Table** | $2^{21}$ entries (~32 MB), Hyatt lockless XOR verification, distance-normalized scores | **>21,000,000 ops/sec** |
-| **Move Ordering** | 5-tier cascade: TT PV $\to$ Winning Moves $\to$ Captures $\to$ Killers $\to$ History | **40.5x** node pruning factor |
+| **Move Ordering** | 5-tier cascade: TT PV $\to$ Winning Moves $\to$ Captures $\to$ Killers $\to$ History + Root Anti-Hanging Filter | **40.5x** node pruning factor |
 | **Tactical Search** | Quiescence search with stand-pat cutoffs and King threat delta pruning bypass | Horizon effect resolved |
-| **Opening Book** | $D_4$ Dihedral Symmetry Group (8-fold compression, 784 precomputed states) | **<0.01 ms** response |
+| **Opening Book** | $D_4$ Dihedral Symmetry Group (8-fold compression, 784 precomputed states, Throne retention invariant) | **<0.01 ms** response |
 | **Parallel Scaling** | Lazy SMP across 4 vCPUs with staggered depth offsets and root move permutations | Linear multi-core scaling |
-| **Parameter Tuning** | Simultaneous Perturbation Stochastic Approximation (SPSA) via headless simulator | Multi-night gradient tuning |
+| **Parameter Tuning** | Simultaneous Perturbation Stochastic Approximation (SPSA) + SVD covariance audit via headless simulator | Multi-night gradient tuning |
 
 ```mermaid
 flowchart TD
     A["Referee TCP Stream"] --> B["TablutAgentClient (I/O Layer)"]
     B --> C["StateAdapter (Bridge)"]
+    B --> TC["TacticalCutoffs (O(1) Instant Mate/Escape Check)"]
     C --> D["ParallelSearchEngine (Lazy SMP Coordinator)"]
     
     subgraph "Decision & Search Pipeline"
         D --> E{"Opening Book Probe"}
-        E -- "Hit (Turns 1-5)" --> F["Instant D4 Move (<0.01ms)"]
-        E -- "Miss" --> G["Iterative Deepening Search (PVS)"]
-        G --> H["MoveOrderer (TT > Win > Capture > Killer > History)"]
+        E -- "Hit (Turns 1-5)" --> F["Instant D4 Move (<0.01ms, Throne Anchored)"]
+        E -- "Miss" --> G["Iterative Deepening Search (PVS + Singular Extensions)"]
+        G --> H["MoveOrderer (TT > Win > Capture > Killer > History + Anti-Hanging)"]
         H --> I["FastState (Make / Unmake Mutation)"]
-        I --> J["TranspositionTable (Hyatt Lockless XOR)"]
+        I --> J["TranspositionTable (2-Slot Bucket, Hyatt Lockless XOR, 134 MB)"]
         G --> K["QuiescenceSearch (Tactical Leaf Extension)"]
-        K --> L["HeuristicEvaluation (17 Parameter Weights)"]
+        K --> L["HeuristicEvaluation (22 Parameter Weights)"]
     end
     
-    F --> M["Action Dispatch (Big-Endian Wire Protocol)"]
+    TC -- "Forced Mate Detected" --> M["Action Dispatch (Big-Endian Wire Protocol)"]
+    F --> M
     G --> M
     M --> A
 ```
@@ -104,9 +110,10 @@ flowchart TD
 The documentation is organized across distinct engineering modules:
 
 1. [**01 — State Representation & Bit Architecture**](01-State-Representation-and-Bit-Architecture.md): Board layout, primitive move packing, stack-allocated undo structs, Ashton capture execution, and 64-bit Zobrist hashing.
-2. [**02 — Search & Pruning Algorithms**](02-Search-and-Pruning-Algorithms.md): Negamax, Iterative Deepening, Principal Variation Search (PVS), Aspiration Windows, Quiescence Search, and lazy move ordering.
-3. [**03 — Heuristics & Domain Knowledge**](03-Heuristics-and-Domain-Knowledge.md): 17 parameterized domain features, King escape forks, 8-point Rhombus cordon, citadel barriers, and open-field swarm gradients.
-4. [**04 — Opening Book & Dihedral Symmetry**](04-Opening-Book-and-Dihedral-Symmetry.md): $D_4$ group theory (8-fold spatial reduction), canonical opening lines, and sub-millisecond table lookups.
-5. [**05 — Concurrency & Lazy SMP**](05-Concurrency-and-Lazy-SMP.md): Multi-core scaling on 4 vCPUs, lockless Transposition Table via Hyatt XOR masking, thread staggering, and opponent-turn CPU suppression.
-6. [**06 — Offline Tuning Pipeline (SPSA)**](06-Offline-Tuning-Pipeline-SPSA.md): Headless match simulation, simultaneous perturbation gradient approximation, decay schedules, atomic checkpoints, and parameter injection.
-7. [**07 — Protocol, CLI & Execution**](07-Protocol-CLI-and-Execution.md): TCP wire framing, dynamic time management, compliance with the Debian competition VM, and strict adversary turn rules.
+2. [**02 — Search & Pruning Algorithms**](02-Search-and-Pruning-Algorithms.md): Negamax, Iterative Deepening, Principal Variation Search (PVS), Aspiration Windows, Singular Extensions, $O(1)$ Tactical Cutoffs, dynamic branching calibration, and root anti-hanging filters.
+3. [**03 — Heuristics & Domain Knowledge**](03-Heuristics-and-Domain-Knowledge.md): 22 parameterized domain features, 2-step proactive escape forks (`SAFE_FORKS`), King shield cohesion, dispersion penalties, 8-point Rhombus cordon, citadel barriers, and SVD covariance analysis.
+4. [**04 — Opening Book & Dihedral Symmetry**](04-Opening-Book-and-Dihedral-Symmetry.md): $D_4$ group theory (8-fold spatial reduction), canonical opening lines, Phase 13 Throne retention sanitization, automated opening miner, and sub-millisecond lookups.
+5. [**05 — Concurrency & Lazy SMP**](05-Concurrency-and-Lazy-SMP.md): Multi-core scaling on 4 vCPUs, 2-slot bucket lockless Transposition Table via Hyatt XOR masking ($2^{23}$ entries / 134 MB), thread staggering, and opponent-turn 0% CPU suppression.
+6. [**06 — Offline Tuning Pipeline (SPSA)**](06-Offline-Tuning-Pipeline-SPSA.md): Headless match simulation, simultaneous perturbation gradient approximation, decay schedules, atomic checkpoints, SVD/PCA orthogonality audit, and parameter injection.
+7. [**07 — Protocol, CLI & Execution**](07-Protocol-CLI-and-Execution.md): TCP wire framing, dynamic time management ($b_{\text{eff}}$ soft cutoff & emergency bitmask hard cutoff), competition scripts, multi-competitor tournament harness vs BrAInmates, THoR, and Luca.
+8. [**08 — VM Deployment & Verification Guide**](08-VM-Deployment-and-Verification-Guide.md): Complete step-by-step procedure for deploying, building, verifying offline execution, auditing CPU/disk invariants, and certifying the player inside the official Debian competition Virtual Machine before submission.

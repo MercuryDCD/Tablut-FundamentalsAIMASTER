@@ -105,31 +105,12 @@ def main():
     # Recompile Java classes
     print("[*] Recompiling Java engine binaries...")
     sep = ";" if os.name == "nt" else ":"
+    java_files = sorted(str(p) for p in Path("src/tablut/engine").glob("*.java"))
     compile_cmd = [
         "javac",
         "-cp", f"TablutCompetition-master/Tablut/Executables/Server.jar{sep}TablutCompetition-master/Tablut/lib/*",
         "-d", "bin",
-        "src/tablut/engine/BoardConstants.java",
-        "src/tablut/engine/Move.java",
-        "src/tablut/engine/UndoInfo.java",
-        "src/tablut/engine/FastState.java",
-        "src/tablut/engine/MoveGenerator.java",
-        "src/tablut/engine/ZobristHash.java",
-        "src/tablut/engine/StateAdapter.java",
-        "src/tablut/engine/HeuristicWeights.java",
-        "src/tablut/engine/WhiteHeuristics.java",
-        "src/tablut/engine/BlackHeuristics.java",
-        "src/tablut/engine/HeuristicEvaluation.java",
-        "src/tablut/engine/BaselineEvaluation.java",
-        "src/tablut/engine/TranspositionTable.java",
-        "src/tablut/engine/MoveOrderer.java",
-        "src/tablut/engine/QuiescenceSearch.java",
-        "src/tablut/engine/OpeningBook.java",
-        "src/tablut/engine/SearchEngine.java",
-        "src/tablut/engine/ParallelSearchEngine.java",
-        "src/tablut/engine/HeadlessTournament.java",
-        "src/tablut/engine/TablutAgentClient.java"
-    ]
+    ] + java_files
 
     res = subprocess.run(compile_cmd, capture_output=True, text=True)
     if res.returncode != 0:

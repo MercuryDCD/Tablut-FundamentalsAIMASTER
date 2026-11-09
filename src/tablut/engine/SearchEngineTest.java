@@ -235,6 +235,7 @@ public final class SearchEngineTest {
                 state.board[i] = BoardConstants.EMPTY;
             }
         }
+        state.whiteCount = 0;
 
         // Put black soldiers flanking c4 horizontally and vertically (blocking perimeter escapes)
         state.board[BoardConstants.coord(3, 1)] = BoardConstants.BLACK; // b4
@@ -278,8 +279,9 @@ public final class SearchEngineTest {
         if (res.bestMove != drawMove) {
             throw new AssertionError("Engine failed to pick drawing move " + Move.toUci(drawMove) + ", picked " + Move.toUci(res.bestMove) + " with score " + res.bestScore);
         }
-        if (res.bestScore != 0) {
-            throw new AssertionError("Expected draw score 0, but got: " + res.bestScore);
+        int expectedScore = engine.isUseContempt() ? 300 : 0;
+        if (res.bestScore != expectedScore) {
+            throw new AssertionError("Expected draw score " + expectedScore + ", but got: " + res.bestScore);
         }
         System.out.printf("PASSED (Rescued draw %s with score %d vs baseline %d)\n",
                 Move.toUci(res.bestMove), res.bestScore, baseRes.bestScore);

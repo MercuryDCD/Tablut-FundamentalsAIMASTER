@@ -41,9 +41,16 @@ WEIGHT_NAMES = [
     "blackMobility",
     "blackConnectedChains",
     "kingOpenFieldContainment",
+    "kingDefenderShieldCohesion",
+    "whitePawnDispersionPenalty",
+    "campPinchTraps",
+    "throneAnvilThreats",
+    "kingSafeForkThreat",
+    "kingThroneAbandonPenalty",
+    "campPerimeterIntegrityPenalty",
 ]
 
-# Canonical Phase 4 literature baseline weights (pre-SPSA tuning)
+# Canonical Phase 4/12 literature baseline weights (pre-SPSA tuning)
 ORIGINAL_BASELINE_WEIGHTS = [
     140,    # whitePiece
     80,     # blackCaptured
@@ -61,7 +68,14 @@ ORIGINAL_BASELINE_WEIGHTS = [
     35,     # kingContainment
     5,      # blackMobility
     20,     # blackConnectedChains
-    18      # kingOpenFieldContainment
+    18,     # kingOpenFieldContainment
+    24,     # kingDefenderShieldCohesion
+    14,     # whitePawnDispersionPenalty
+    35,     # campPinchTraps
+    28,     # throneAnvilThreats
+    2800,   # kingSafeForkThreat
+    400,    # kingThroneAbandonPenalty
+    45      # campPerimeterIntegrityPenalty
 ]
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent

@@ -34,7 +34,7 @@ public final class TablutAgentClient extends TablutClient {
         super(role.toLowerCase(), AGENT_NAME, timeoutSeconds, serverIp);
         this.timeoutSeconds = timeoutSeconds;
         this.engine = new ParallelSearchEngine();
-        this.engine.setTimeSafetyRatio(0.90); // Parameterized 90% budget ratio
+        this.engine.setTimeSafetyRatio(0.94); // Parameterized 94% budget ratio (maximizes search time while preserving safe TCP margin)
         this.fastState = new FastState();
     }
 

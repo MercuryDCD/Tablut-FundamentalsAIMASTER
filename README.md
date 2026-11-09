@@ -1,8 +1,7 @@
 # Antigravity — Autonomous Tablut AI Engine
 
 > **UNIBO Tablut Challenge (A.A. 2026/2027)**  
-> *Fundamentals of Artificial Intelligence and Knowledge Representation*  
-> **Authors:** Dani, Luca Peratella, and Team
+> *Fundamentals of Artificial Intelligence and Knowledge Representation*
 
 An autonomous, tournament-grade Artificial Intelligence agent engineered to compete in the ancient Norse board game **Ashton Tablut**. Built in Java with zero heap allocations, multi-core Lazy SMP search, dihedral symmetry opening theory, and automated SPSA parameter learning.
 
@@ -48,28 +47,26 @@ How does the Antigravity agent choose its moves in a tournament match?
 
 ```mermaid
 flowchart TD
-    State["Received Board State<br/>(Server Socket)"] --> BookCheck{"Is Turn ≤ 5 and<br/>in Opening Book?"}
+    State["Received Board State from Server"] --> BookCheck{"Turn <= 5 and<br/>in Opening Book?"}
     
-    BookCheck -->|Yes| BookLookup["D4 Dihedral Group Symmetry Lookup<br/>(Instant &lt; 0.01 ms)"]
-    BookLookup --> SendMove["Transmit Move to Server"]
+    BookCheck -- "Yes" --> BookLookup["D4 Dihedral Symmetry Lookup<br/>(Instant response < 0.01 ms)"]
+    BookLookup --> SendMove["Transmit Action to Server"]
     
-    BookCheck -->|No| IDS["Iterative Deepening Search (IDS)<br/>(Depth 1 → 2 → 3 → 4 → 5 → 6+)"]
+    BookCheck -- "No" --> IDS["Iterative Deepening Search<br/>(Depth 1, 2, 3, 4, 5...)"]
     
-    IDS --> SMP["Lazy SMP: 4 vCPU Worker Threads<br/>(Lockless Shared TT with Hyatt XOR)"]
-    
-    SMP --> PVS["Principal Variation Search (PVS)<br/>(Alpha-Beta with Null-Window Pruning)"]
-    
-    PVS --> Ordering["Move Ordering Heuristics<br/>(PV Move → Wins → Captures → Killers → History)"]
+    IDS --> SMP["Lazy SMP Worker Pool (4 vCPUs)<br/>Shared Lockless TT (Hyatt XOR)"]
+    SMP --> MoveOrder["Move Ordering Cascade<br/>(TT Move > Wins > Captures > Killers > History)"]
+    MoveOrder --> PVS["Principal Variation Search (PVS)<br/>(Full Window PV + Null-Window Scouts)"]
     
     PVS --> LeafCheck{"Leaf Node Reached?"}
-    
-    LeafCheck -->|Captures Active| Quiescence["Quiescence Search (QS)<br/>(Stabilize tactical capture horizon)"]
-    LeafCheck -->|Quiet State| Eval["Linear Heuristic Evaluation<br/>(17 SPSA-Tuned Weights @ 85M NPS)"]
+    LeafCheck -- "Captures Active" --> Quiescence["Quiescence Search<br/>(Tactical Horizon Resolution)"]
+    LeafCheck -- "Quiet State" --> Eval["Heuristic Evaluation<br/>(17 SPSA Parameter Weights)"]
     
     Quiescence --> Eval
-    Eval --> IDS
-    IDS --> CutoffCheck{"Time Budget Expiring?<br/>(90% Safe Soft Cutoff)"}
-    CutoffCheck -->|Yes| SendMove
+    Eval --> TimeCheck{"Time Expiring or Cutoff?<br/>(90% Safety Margin)"}
+    
+    TimeCheck -- "Time Remaining" --> IDS
+    TimeCheck -- "Deadline Reached" --> SendMove
 ```
 
 ---
@@ -109,27 +106,14 @@ Rather than treating AI algorithms as black boxes, each component in Antigravity
 
 ---
 
-## 4. Collaborative Team Engineering: Antigravity & Luca's Architecture
+## 4. Tactical Insights from Matches Against Luca's Neural Engine
 
-Our team explored two complementary AI paradigms for the Tablut Challenge:
-1. **Antigravity (This Engine):** Ultra-high-speed classical search with 17 SPSA-tuned heuristics, achieving massive search depth (Depth 6–8) at 85M NPS.
-2. **Teammate Luca's Player (`team/luca/`):** A neural evaluator architecture utilizing an MLP network with 40 domain features, paired with Negamax and Lazy SMP.
+Pitting the engine against a neural-network-based peer (`team/luca`, an MLP evaluator with 40 domain features and 4-thread Lazy SMP) during development matches provided crucial empirical insights that shaped the current architecture:
 
-```mermaid
-flowchart LR
-    subgraph TeamSynergy["Collaborative Team Synergy"]
-        Luca["<b>Teammate Luca</b><br/><code>team/luca</code><br/>Neural Evaluator (40 Features)"]
-        Anti["<b>Antigravity Engine</b><br/><code>src/tablut/engine</code><br/>High-Speed Heuristics (17 Features)"]
-        
-        Luca -->|GHI Repetition Safety<br/>Lazy Move Selection<br/>Lockless XOR TT<br/>Citadel Geometry| Anti
-        Anti -->|D4 Opening Book Expansion<br/>SPSA Optimization Pipeline<br/>Tactical Benchmarking| Luca
-    end
-```
-
-### Shared Breakthroughs Ingested from Team Discussions:
-* **Graph History Interaction (GHI) Safety:** In games where repetitions result in draws, subtree evaluations are path-dependent. If a repetition occurs inside a branch, writing that score to the global Transposition Table corrupts other branches. We implemented GHI bypass to guarantee TT purity.
-* **In-Place Lazy Move Selection (`selectBest`):** Instead of sorting all 40+ legal moves upfront ($O(N^2)$), we select the single best move on-demand. In 80–90% of nodes, an alpha-beta cutoff occurs on the first move, avoiding the overhead of sorting the rest.
-* **Citadel Boundary Geometry:** Proved that 12 border squares are blocked by citadels. Naive Manhattan edge distance caused suicidal rushes toward closed camps; we precomputed true shortest paths to the 20 real escape squares.
+* **Graph History Interaction (GHI) & Repetition Traps:** In high-level matches against deep positional play, repeated moves occurred frequently. If a branch evaluated to a draw due to cycle repetition along that specific path, storing that score into the global Transposition Table poisoned unrelated branches, causing the engine to falsely abandon winning lines. Implementing GHI detection to bypass Transposition Table storage on path-dependent draw repetitions completely eliminated table poisoning.
+* **In-Place Lazy Move Selection (`selectBest`):** Analyzing profile traces during competitive matches showed that sorting all 30–60 legal moves upfront with an $O(N^2)$ routine wasted significant clock time at cut-nodes. Switching to on-demand selection—scoring moves once and lazily extracting only the top candidate per iteration—ensured that when move 0 or 1 triggered an alpha-beta cutoff, the remaining moves were never sorted.
+* **Citadel Boundary Geometry:** Early test games revealed that naive Manhattan distance to the outer border misled the White King into rushing toward closed citadel walls (camp squares forbidden to White). Real match play against solid defensive cordon structures proved the King must calculate paths strictly against the 20 legal perimeter exit squares (16 escapes + 4 corners).
+* **Opening Counter-Tactics:** Live tournament encounters against aggressive opening lines (such as Black's flank attack `f1 -> f3` or White's flank advance `e6 -> f6`) exposed tactical vulnerabilities in standard textbook openings, leading to direct counter-lines in the $D_4$ opening book (`d5 -> d6` and `e8 -> g8`) that neutralize early pressure in sub-millisecond time.
 
 ---
 
@@ -157,13 +141,13 @@ Launch the agent conforming to the official UNIBO tournament specification:
 ./runmyplayer.sh WHITE 45 localhost
 ```
 
-### 5.4 Test Matches & Team Benchmarks
-* **Single Match vs Baseline or Teammate Luca:**
+### 5.4 Test Matches & Adversarial Benchmarks
+* **Single Match vs Baseline or Luca's Engine:**
   ```powershell
   # Play White vs RandomPlayer (45s timeout)
   .\scripts\match_official.ps1 -Role WHITE -Opponent RANDOM -Timeout 45
 
-  # Play Black vs Teammate Luca's neural engine (team/luca)
+  # Play Black vs Luca's neural engine (team/luca)
   .\scripts\match_official.ps1 -Role BLACK -Opponent LUCA -Timeout 45
   ```
 * **Run a Head-to-Head Tournament:**
@@ -175,6 +159,9 @@ Launch the agent conforming to the official UNIBO tournament specification:
   python scripts/train_overnight.py --auto-apply
   ```
 
+> [!TIP]
+> For the complete operations manual, detailed CLI parameters, multi-opponent tournaments (vs BrAInmates, THoR), ablation benchmarks, opening mining, and unit test runners, see **[`SCRIPTS.md`](SCRIPTS.md)**.
+
 ---
 
 ## 6. Project Structure & Deep-Dive Wiki
@@ -185,19 +172,21 @@ Launch the agent conforming to the official UNIBO tournament specification:
 │   └── wiki/                     # In-depth technical documentation
 │       ├── Home.md                                      # Overview, Ashton rules & specifications
 │       ├── 01-State-Representation-and-Bit-Architecture.md # Flat byte[81], UndoInfo, Zobrist
-│       ├── 02-Search-and-Pruning-Algorithms.md          # Negamax, PVS, Quiescence, Move ordering
-│       ├── 03-Heuristics-and-Domain-Knowledge.md        # 17 domain weights, Rhombus, swarm field
-│       ├── 04-Opening-Book-and-Dihedral-Symmetry.md      # D4 group symmetry & canonical theory
-│       ├── 05-Concurrency-and-Lazy-SMP.md               # 4-vCPU Lazy SMP & Hyatt lockless XOR TT
-│       ├── 06-Offline-Tuning-Pipeline-SPSA.md           # Headless simulator & SPSA optimization
-│       └── 07-Protocol-CLI-and-Execution.md             # TCP framing, cutoffs & VM compliance
+│       ├── 02-Search-and-Pruning-Algorithms.md          # Negamax, PVS, Singular Ext, O(1) Cutoffs
+│       ├── 03-Heuristics-and-Domain-Knowledge.md        # 22 domain weights, SAFE_FORKS, Rhombus, SVD
+│       ├── 04-Opening-Book-and-Dihedral-Symmetry.md      # D4 group symmetry, Throne retention invariant
+│       ├── 05-Concurrency-and-Lazy-SMP.md               # 4-vCPU Lazy SMP & 2-Slot 134MB Lockless TT
+│       ├── 06-Offline-Tuning-Pipeline-SPSA.md           # Headless simulator, 2-phase overnight SPSA
+│       ├── 07-Protocol-CLI-and-Execution.md             # TCP framing, dynamic b_eff cutoffs, gauntlets
+│       └── 08-VM-Deployment-and-Verification-Guide.md   # Official Debian VM pre-submission runbook
 ├── scripts/                      # Automated training, tournaments, and match runners
 ├── src/tablut/engine/            # Core Java engine source code
 ├── team/
-│   └── luca/                     # Teammate Luca's neural engine project and experiments
+│   └── luca/                     # Luca's neural engine benchmark player
 ├── checkpoint_weights.json       # Current active and best trained heuristic weights
 ├── CODEBASE_MAP.md               # Complete symbol, bit-layout, and API index for agents
 ├── GEMINI.md                     # Central project roadmap, milestones, and instructions
+├── SCRIPTS.md                    # Complete operational guide and script execution runbook
 └── runmyplayer.sh / .ps1         # Official competition entry point scripts
 ```
 

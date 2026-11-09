@@ -48,26 +48,40 @@ WEIGHT_NAMES = [
     "blackMobility",             # 14: Mobility bonus for active Black soldiers
     "blackConnectedChains",      # 15: Bonus for connected blockade chains (orthogonal & diagonal links)
     "kingOpenFieldContainment",  # 16: Bonus for swarming escaping King in open field (distFromCenter >= 2)
+    "kingDefenderShieldCohesion",# 17: Bonus for White defenders shielding within Chebyshev dist 1-2
+    "whitePawnDispersionPenalty",# 18: Quadratic penalty for White pawns dispersed > 3 steps from King
+    "campPinchTraps",            # 19: Tactical bonus for Black threatening camp-wall pinch traps
+    "throneAnvilThreats",        # 20: Tactical bonus for line-of-sight threats using empty Throne as anvil
+    "kingSafeForkThreat",        # 21: Proactive bonus for King threatening an unblockable 2-step fork (SAFE_FORKS)
+    "kingThroneAbandonPenalty",  # 22: Penalty for White King abandoning Throne e5 without escape corridor or safe fork
+    "campPerimeterIntegrityPenalty" # 23: Penalty for Black abandoning 8 outer camp corners when threatened
 ]
 
 DEFAULT_WEIGHTS = [
-    140,    # whitePiece
-    80,     # blackCaptured
-    30,     # kingDistance
-    1500,   # kingSingleEscape
-    18000,  # kingDoubleEscape
-    70,     # diamondOccupancy
-    20,     # kingMobility
-    220,    # kingVulnerabilityPenalty
-    80,     # blackPiece
-    200,    # whiteCaptured
-    100,    # rhombusBlockade
-    60,     # campFrontPreserved
-    280,    # kingSurroundedThrone
-    35,     # kingContainment
-    5,      # blackMobility
-    20,     # blackConnectedChains
-    18      # kingOpenFieldContainment
+    115,    # whitePiece
+    125,    # blackCaptured
+    31,     # kingDistance
+    1412,   # kingSingleEscape
+    18269,  # kingDoubleEscape
+    37,     # diamondOccupancy
+    12,     # kingMobility
+    142,    # kingVulnerabilityPenalty
+    136,    # blackPiece
+    176,    # whiteCaptured
+    70,     # rhombusBlockade
+    77,     # campFrontPreserved
+    50,     # kingSurroundedThrone
+    43,     # kingContainment
+    8,      # blackMobility
+    18,     # blackConnectedChains
+    16,     # kingOpenFieldContainment
+    24,     # kingDefenderShieldCohesion
+    14,     # whitePawnDispersionPenalty
+    35,     # campPinchTraps
+    28,     # throneAnvilThreats
+    2800,   # kingSafeForkThreat
+    400,    # kingThroneAbandonPenalty
+    45      # campPerimeterIntegrityPenalty
 ]
 
 BOUNDS = [
@@ -88,6 +102,13 @@ BOUNDS = [
     (1, 30),        # blackMobility
     (0, 100),       # blackConnectedChains
     (0, 80),        # kingOpenFieldContainment
+    (5, 100),       # kingDefenderShieldCohesion
+    (2, 80),        # whitePawnDispersionPenalty
+    (5, 150),       # campPinchTraps
+    (5, 150),       # throneAnvilThreats
+    (500, 8000),    # kingSafeForkThreat
+    (100, 1500),    # kingThroneAbandonPenalty
+    (5, 200)        # campPerimeterIntegrityPenalty
 ]
 
 # Scale factor for exploration step Delta per weight index
@@ -108,7 +129,14 @@ SCALES = [
     4.0,    # kingContainment
     1.0,    # blackMobility
     4.0,    # blackConnectedChains
-    3.0     # kingOpenFieldContainment
+    3.0,    # kingOpenFieldContainment
+    4.0,    # kingDefenderShieldCohesion
+    3.0,    # whitePawnDispersionPenalty
+    5.0,    # campPinchTraps
+    5.0,    # throneAnvilThreats
+    150.0,  # kingSafeForkThreat
+    40.0,   # kingThroneAbandonPenalty
+    8.0     # campPerimeterIntegrityPenalty
 ]
 
 # Curriculum Training Stages (Block Coordinate SPSA)
@@ -128,9 +156,14 @@ STAGES = {
         "description": "King distance, king & black mobility, king vulnerability penalty",
         "indices": [2, 6, 7, 14]  # kingDistance, kingMobility, kingVulnerabilityPenalty, blackMobility
     },
+    "tactical_compound": {
+        "name": "Stage 4: Asymmetric Shield & Compound Spatial Features (Phase 12/13/14)",
+        "description": "Shield cohesion, dispersion penalty, camp pinch traps, throne anvils, proactive 2-step escape forks, throne abandon, perimeter integrity",
+        "indices": [17, 18, 19, 20, 21, 22, 23]
+    },
     "all": {
-        "name": "Stage 4: Joint Fine-Tuning (All 17 Parameters)",
-        "description": "Full simultaneous perturbation across all 17 heuristic parameters",
+        "name": "Stage 5: Joint Fine-Tuning (All 24 Parameters)",
+        "description": "Full simultaneous perturbation across all 24 heuristic parameters",
         "indices": list(range(len(WEIGHT_NAMES)))
     }
 }
@@ -177,7 +210,7 @@ def load_checkpoint():
         print(f"Warning: Failed to load checkpoint ({e}). Starting fresh.")
         return None
 
-def run_headless_match(weights_a_csv, weights_b_csv, games, threads, depth, classpath):
+def run_headless_match(weights_a_csv, weights_b_csv, games, threads, depth, classpath, timeout_ms=2500, max_plies=60):
     cmd = [
         "java",
         "-cp", classpath,
@@ -185,13 +218,17 @@ def run_headless_match(weights_a_csv, weights_b_csv, games, threads, depth, clas
         "--games", str(games),
         "--threads", str(threads),
         "--depth", str(depth),
+        "--timeout-ms", str(timeout_ms),
+        "--max-plies", str(max_plies),
         "--weightsA", weights_a_csv,
         "--weightsB", weights_b_csv,
         "--opening-random-plies", "2",
         "--quiet"
     ]
     try:
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=120)
+        # Generous timeout guard scaling with game count (prevents aborting deep evaluations)
+        match_timeout = max(1200, games * 30)
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=match_timeout)
         if proc.returncode != 0:
             print(f"Java Error: {proc.stderr}", file=sys.stderr)
             return None
@@ -222,6 +259,10 @@ def main():
     parser.add_argument("--perturbation", type=float, default=1.0, help="SPSA perturbation step parameter 'c' (default: 1.0)")
     parser.add_argument("--warm-restart", action="store_true",
                         help="Reset SPSA learning rate decay (a_k, c_k) to step 1 for the current session (recommended when resuming a new stage or changing depth)")
+    parser.add_argument("--timeout-ms", type=int, default=2500,
+                        help="Move timeout in milliseconds for simulation (default: 2500)")
+    parser.add_argument("--max-plies", type=int, default=60,
+                        help="Maximum plies before draw adjudication in simulation (default: 60)")
     parser.add_argument("--auto-apply", action="store_true",
                         help="Automatically apply best weights and recompile engine binaries upon stopping/completion")
     args = parser.parse_args()
@@ -277,7 +318,7 @@ def main():
         print("\n[!] Ctrl+C detected. Gracefully finishing current match, flushing checkpoint and exiting...")
     signal.signal(signal.SIGINT, handle_sigint)
 
-    CURRICULUM_CYCLE = ["material", "positional", "micro", "all"]
+    CURRICULUM_CYCLE = ["material", "positional", "micro", "tactical_compound", "all"]
 
     print("=" * 80)
     print("  TABLUT HEURISTIC OPTIMIZER — ANYTIME SPSA PIPELINE")
@@ -353,7 +394,8 @@ def main():
         csv_minus = weights_to_csv(w_minus_clamped)
 
         # 4. Run tournament: w+ vs w-
-        match_res = run_headless_match(csv_plus, csv_minus, args.games, args.threads, args.depth, classpath)
+        match_res = run_headless_match(csv_plus, csv_minus, args.games, args.threads, args.depth, classpath,
+                                       timeout_ms=args.timeout_ms, max_plies=args.max_plies)
         if match_res is None or interrupted:
             break
 
@@ -386,15 +428,22 @@ def main():
 
         # 7. Real-time telemetry log
         diff_str = []
-        log_indices = sorted(active_indices) if len(active_indices) <= 6 else [0, 2, 7, 8, 9, 10]
-        for i in log_indices:
+        for i in sorted(active_indices):
             diff = int(round(active_w[i])) - DEFAULT_WEIGHTS[i]
             sign = "+" if diff >= 0 else ""
             diff_str.append(f"{WEIGHT_NAMES[i]}={int(round(active_w[i]))}({sign}{diff})")
 
         print(f"[Iter {iteration:4d} | C{current_cycle}:{current_stage:<10}] Games: {total_games:6d} | WinRate(+): {y_plus*100:5.1f}% | "
               f"a_k: {a_k:5.2f} | Speed: {speed:5.1f} g/s | Elapsed: {int(total_elapsed)}s")
-        print(f"         Active Weights: {', '.join(diff_str)}")
+        if len(diff_str) <= 6:
+            print(f"         Active Weights: {', '.join(diff_str)}")
+        else:
+            # Multi-line formatted display so all 22 parameters are visible
+            chunk_size = 5
+            for chunk_idx in range(0, len(diff_str), chunk_size):
+                chunk = diff_str[chunk_idx:chunk_idx + chunk_size]
+                prefix = "         Active Weights: " if chunk_idx == 0 else "                         "
+                print(f"{prefix}{', '.join(chunk)}")
 
         session_iter = iteration - start_iteration
         if args.max_iterations > 0 and session_iter >= args.max_iterations:
@@ -414,6 +463,8 @@ def main():
 
     # Auto-apply if requested
     if args.auto_apply:
+        # Ignore SIGINT during apply & recompile so repeated Ctrl+C keystrokes don't kill javac
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         print("\n[*] Auto-apply enabled: Ingesting best weights into HeuristicWeights.java and recompiling...")
         apply_script = Path(__file__).parent / "apply_weights.py"
         res = subprocess.run([sys.executable, str(apply_script)])

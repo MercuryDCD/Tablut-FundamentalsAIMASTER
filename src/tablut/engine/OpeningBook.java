@@ -86,10 +86,16 @@ public final class OpeningBook {
 
     // Map: Canonical Zobrist Hash -> List of candidate book moves
     private final Map<Long, List<BookEntry>> book = new HashMap<>(512);
-    private final Random rng = new Random(42);
+    private final Random rng;
     private boolean greedy = true; // Default: greedy for official tournament
+    private double epsilon = 0.20; // 80% primary best move, 20% alternative book moves
 
     public OpeningBook() {
+        this(new Random());
+    }
+
+    public OpeningBook(Random rng) {
+        this.rng = (rng != null) ? rng : new Random();
         loadCanonicalOpenings();
     }
 
@@ -99,6 +105,14 @@ public final class OpeningBook {
 
     public boolean isGreedy() {
         return greedy;
+    }
+
+    public void setEpsilon(double epsilon) {
+        this.epsilon = epsilon;
+    }
+
+    public double getEpsilon() {
+        return epsilon;
     }
 
     public int size() {
@@ -141,15 +155,43 @@ public final class OpeningBook {
     }
 
     private int selectMove(List<BookEntry> entries) {
-        if (entries.size() == 1 || greedy) {
-            // Greedy: pick entry with maximum weight
-            BookEntry best = entries.get(0);
+        if (entries.size() == 1) {
+            return entries.get(0).move;
+        }
+
+        if (greedy) {
+            // Greedy with optional epsilon exploration to break predictability
+            int bestIdx = 0;
             for (int i = 1; i < entries.size(); i++) {
-                if (entries.get(i).weight > best.weight) {
-                    best = entries.get(i);
+                if (entries.get(i).weight > entries.get(bestIdx).weight) {
+                    bestIdx = i;
                 }
             }
-            return best.move;
+
+            // Epsilon-greedy: with probability (1 - epsilon), pick the primary move;
+            // with probability epsilon, sample among alternative valid book moves
+            if (epsilon > 0.0 && rng.nextDouble() < epsilon) {
+                int totalAltWeight = 0;
+                for (int i = 0; i < entries.size(); i++) {
+                    if (i != bestIdx) {
+                        totalAltWeight += Math.max(1, entries.get(i).weight);
+                    }
+                }
+                if (totalAltWeight > 0) {
+                    int r = rng.nextInt(totalAltWeight);
+                    int running = 0;
+                    for (int i = 0; i < entries.size(); i++) {
+                        if (i != bestIdx) {
+                            running += Math.max(1, entries.get(i).weight);
+                            if (r < running) {
+                                return entries.get(i).move;
+                            }
+                        }
+                    }
+                }
+            }
+
+            return entries.get(bestIdx).move;
         }
 
         // Stochastic sampling for self-play training diversity
@@ -193,6 +235,12 @@ public final class OpeningBook {
             String uci = uciMoves[i];
             int from = parseSquare(uci.substring(0, 2));
             int to   = parseSquare(uci.substring(2, 4));
+
+            // Pillar 1 Sanity Invariant: King must NEVER voluntarily evacuate Throne in opening book
+            if (from == BoardConstants.THRONE) {
+                throw new IllegalArgumentException("Suicidal opening move from Throne detected: " + uci);
+            }
+
             int move = Move.encode(from, to);
 
             // Record book move for state before making the move
@@ -234,11 +282,30 @@ public final class OpeningBook {
      * All lines are automatically expanded 8-fold across all D4 dihedral symmetries.
      */
     private void loadCanonicalOpenings() {
-        // Line 1: Standard White flank evacuation (e3 -> d3), Black Rhombus response (e2 -> c2)
-        // Extended to 6 plies: White occupies diamond d3; Black constructs Rhombus at c2;
-        // White clears e4; Black sets northern Rhombus at g8; King steps to e4; Black clamps b7.
+        // Line 0A: Inner Cross Lateral Expansion (e4 -> d4) - Robust against anvil traps
+        // White opens the southern flank corridor without exposing e3 or e4 to hostile camp anvils.
+        // If Black plays conservative flank clamps (e2 -> c2), White advances d4 -> c4 to construct an unblockable runway.
         addLine(new String[] {
-            "e3d3", "e2c2", "e4f4", "e8g8", "e5e4", "b5b7"
+            "e4d4", "e2c2", "d4c4", "f1f3", "d5d6"
+        }, 130);
+
+        // Line 0B: Inner Cross Lateral Expansion (e4 -> d4), Black pin response (i4 -> e4)
+        // White anchors d4 -> d2, parrying the flank probe and consolidating the central defense.
+        addLine(new String[] {
+            "e4d4", "i4e4", "d4d2", "h5h3", "d2d3"
+        }, 125);
+
+        // Line 0C: Tactical Punishment against opponent playing e3 -> d3 as White
+        // If opponent plays e3 -> d3 as White, Antigravity playing Black immediately punishes with e2 -> e3,
+        // capturing White's cross pawn on e4 against the Throne anvil!
+        addLine(new String[] {
+            "e3d3", "e2e3", "d5d6", "b5b7", "c5c7"
+        }, 125);
+
+        // Line 1: Standard White flank evacuation (e3 -> d3), Black Rhombus response (e2 -> c2)
+        // Sanitized (Phase 13 Pillar 1): White clears cross pawns e4 -> f4, anchors d5 -> d6; King remains on Throne
+        addLine(new String[] {
+            "e3d3", "e2c2", "e4f4", "e8g8", "d5d6", "b5b7"
         }, 120);
 
         // Line 2: Match line vs teammate Luca (Game 1): White e3 -> d3, Black camp pin f1 -> f3
@@ -284,33 +351,39 @@ public final class OpeningBook {
         }, 105);
 
         // Line 9: White central clearance (e3 -> d3), Black axial reinforcement (e8 -> e7)
+        // Sanitized (Phase 13 Pillar 1): White advances d5 -> d6 while King stays anchored
         addLine(new String[] {
-            "e3d3", "e8e7", "e4e3", "b5c5", "e5e4", "e2e3"
+            "e3d3", "e8e7", "e4e3", "b5c5", "d5d6", "e2c2"
         }, 100);
 
         // Line 10: White northern lateral release (e7 -> f7), Black Rhombus response (e8 -> g8)
+        // Sanitized (Phase 13 Pillar 1): White clears f5 -> f6 while King stays anchored
         addLine(new String[] {
-            "e7f7", "e8g8", "e6d6", "e2c2", "e5e6", "b5b7"
+            "e7f7", "e8g8", "e6d6", "e2c2", "f5f6", "b5b7"
         }, 110);
 
         // Line 11: White symmetric northern release (e7 -> f7), Black southern axis (e2 -> e3)
+        // Sanitized (Phase 13 Pillar 1): White clears d5 -> d6
         addLine(new String[] {
-            "e7f7", "e2e3", "e6e7", "h5g5", "e5e6", "e8g8"
+            "e7f7", "e2e3", "e6e7", "h5g5", "d5d6", "e8g8"
         }, 95);
 
         // Line 12: White northern flank clearance (e7 -> d7), Black Rhombus response (e8 -> g8)
+        // Sanitized (Phase 13 Pillar 1): White clears f5 -> f6
         addLine(new String[] {
-            "e7d7", "e8g8", "e6d6", "e2c2", "e5e6", "b5b7"
+            "e7d7", "e8g8", "e6d6", "e2c2", "f5f6", "b5b7"
         }, 110);
 
         // Line 13: White northern flank clearance (e7 -> d7), Black southern axis (e2 -> e3)
+        // Sanitized (Phase 13 Pillar 1): White clears f5 -> f6
         addLine(new String[] {
-            "e7d7", "e2e3", "e6e7", "a5b5", "e5e6", "e8g8"
+            "e7d7", "e2e3", "e6e7", "a5b5", "f5f6", "e8g8"
         }, 95);
 
         // Line 14: White west cross clearance (c5 -> c4), Black Rhombus flank containment (b5 -> b7)
+        // Sanitized (Phase 13 Pillar 1): White clears f5 -> f6
         addLine(new String[] {
-            "c5c4", "b5b7", "d5d6", "e2c2", "e5d5", "e8g8"
+            "c5c4", "b5b7", "d5d6", "e2c2", "f5f6", "e8g8"
         }, 105);
 
         // Line 15: White west cross corridor push (c5 -> c7), Black Rhombus clamp (b5 -> b7)
@@ -324,8 +397,9 @@ public final class OpeningBook {
         }, 100);
 
         // Line 17: White east cross clearance (g5 -> g6), Black Rhombus flank containment (h5 -> h3)
+        // Sanitized (Phase 13 Pillar 1): White clears d5 -> d6
         addLine(new String[] {
-            "g5g6", "h5h3", "f5f4", "e8g8", "e5f5", "b5b7"
+            "g5g6", "h5h3", "f5f4", "e8g8", "d5d6", "b5b7"
         }, 105);
 
         // Line 18: White east cross corridor push (g5 -> g7), Black Rhombus clamp (h5 -> h7)
@@ -339,28 +413,56 @@ public final class OpeningBook {
         }, 100);
 
         // Line 20: White diamond construction d5 -> d6, Black perimeter clamp a4 -> b4
+        // Sanitized (Phase 13 Pillar 1): White clears f5 -> f4
         addLine(new String[] {
-            "d5d6", "a4b4", "e3d3", "e8g8", "e5d5"
+            "d5d6", "a4b4", "e3d3", "e8g8", "f5f4"
         }, 95);
 
         // Line 21: White diamond construction f5 -> f4, Black perimeter clamp i6 -> h6
+        // Sanitized (Phase 13 Pillar 1): White clears d5 -> d6
         addLine(new String[] {
-            "f5f4", "i6h6", "e7f7", "e2c2", "e5f5"
+            "f5f4", "i6h6", "e7f7", "e2c2", "d5d6"
         }, 95);
 
         // Line 22: White horizontal clearance c5 -> c4, Black western blockade a4 -> b4
+        // Sanitized (Phase 13 Pillar 1): White clears f5 -> f6
         addLine(new String[] {
-            "c5c4", "a4b4", "d5c5", "e9e8", "e5d5"
+            "c5c4", "a4b4", "d5c5", "e9e8", "f5f6"
         }, 90);
 
         // Line 23: White east clearance g5 -> g6, Black eastern clamp i6 -> h6
+        // Sanitized (Phase 13 Pillar 1): White clears d5 -> d6
         addLine(new String[] {
-            "g5g6", "i6h6", "f5g5", "d1d2", "e5f5"
+            "g5g6", "i6h6", "f5g5", "d1d2", "d5d6"
         }, 90);
 
         // Line 24: Classic defensive clearance e3 -> f3, Black response e8 -> e7
+        // Sanitized (Phase 13 Pillar 1): White clears d5 -> d6
         addLine(new String[] {
-            "e3f3", "e8e7", "e4e3", "h5g5", "e5e4"
+            "e3f3", "e8e7", "e4e3", "h5g5", "d5d6"
         }, 90);
+
+        // Line 25: Counter vs Luca's flank probe d1 -> d3: White responds 2. d4 -> c4!
+        // Prevents Black clamp on c4 and opens lateral runway while King remains secure on Throne
+        addLine(new String[] {
+            "e4d4", "d1d3", "d4c4", "e8g8", "d5d6", "b5b7"
+        }, 125);
+
+        // Line 26: Counter vs Luca's flank probe d1 -> d3: Alternative White response 2. d5 -> d6!
+        // Constructs central diamond bastion while King remains secure on Throne
+        addLine(new String[] {
+            "e4d4", "d1d3", "d5d6", "e8g8", "d4c4", "b5b7"
+        }, 120);
+
+        // Line 27: Counter vs UNIBO Champion brAInmates' flank probe f1 -> f4: White responds 3. d2 -> d3!
+        // Empirical holding line from real tournament play (achieved Draw vs brAInmates)
+        addLine(new String[] {
+            "e4d4", "i4e4", "d4d2", "f1f4", "d2d3", "i6f6"
+        }, 125);
+
+        // Line 28: Alternative vs brAInmates' f1 -> f4: White 3. d2 -> d3! followed by Black b5 -> b7
+        addLine(new String[] {
+            "e4d4", "i4e4", "d4d2", "f1f4", "d2d3", "b5b7"
+        }, 120);
     }
 }

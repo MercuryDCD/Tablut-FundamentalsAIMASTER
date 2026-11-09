@@ -82,8 +82,10 @@ The referee server dynamically configures move timeout limits via command-line a
 `SearchEngine.java` dynamically calculates search budgets based on the `<TIMEOUT_SECONDS>` parameter passed at startup:
 
 ### 2.1 The Two-Tier Cutoff Architecture
-1. **Tier 1: Predictive Soft Cutoff (Root Level):**
-   Iterative deepening checks before initiating depth iteration $d+1$. It calculates the estimated time required for the next depth using the empirical effective branching factor ($b_{\text{eff}} \approx 4.0$):
+1. **Tier 1: Predictive Soft Cutoff with Dynamic $b_{\text{eff}}$ Calibration (Root Level):**
+   Iterative deepening checks before initiating depth iteration $d+1$. It calculates the estimated time required for the next depth using a dynamically calibrated effective branching factor:
+
+   $$b_{\text{eff}} = \text{clamp}\left(2.2, \, 4.5, \, \frac{T_d}{T_{d-1}}\right)$$
 
    $$T_{\text{projected}} = T_{\text{elapsed}} + (T_d \times b_{\text{eff}})$$
 
@@ -163,4 +165,35 @@ BIN_DIR="$SCRIPT_DIR/bin"
 LIB_SERVER="$SCRIPT_DIR/TablutCompetition-master/Tablut/Executables/Server.jar"
 
 exec java -cp "$BIN_DIR:$LIB_SERVER" tablut.engine.TablutAgentClient "$ROLE" "$TIMEOUT" "$SERVER_IP"
+```
+
+---
+
+## 5. Tournament Harnesses & Peer Benchmarking
+
+The engine includes automated match orchestration scripts to validate performance against baseline clients and champion historical engines:
+
+### 5.1 Multi-Competitor Gauntlet (`scripts/tournament_vs_opponents.ps1`)
+Orchestrates round-robin tournaments against configured competitors (`competitors/`):
+```powershell
+# Run tournament against all available competitors at 45s/move:
+.\scripts\tournament_vs_opponents.ps1 -Opponent all -Games 2 -Timeout 45
+
+# Targeted match against BrAInmates (1st Place UNIBO 2020 Champion):
+.\scripts\tournament_vs_opponents.ps1 -Opponent brainmates -Games 4 -Timeout 45
+
+# Targeted match against THoR (3rd Place UNIBO 2020):
+.\scripts\tournament_vs_opponents.ps1 -Opponent thor -Games 4 -Timeout 45
+```
+
+### 5.2 Peer-Engine Benchmarking (`scripts/tournament_vs_luca.ps1`)
+Runs paired matches against teammate Luca Peratella's neural MCTS / Negamax architecture (`team/luca`):
+```powershell
+.\scripts\tournament_vs_luca.ps1 -Games 2 -Timeout 45
+```
+
+### 5.3 Inter-Version Regression Harness (`scripts/match_versions.ps1`)
+Pits the current working tree against any previous Git commit to detect regressions or verify opening book adjustments:
+```powershell
+.\scripts\match_versions.ps1 -Games 2 -Timeout 15 -Commit HEAD~1
 ```

@@ -10,6 +10,6 @@ param (
 )
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ClassPath = "$ScriptDir\bin;$ScriptDir\TablutCompetition-master\Tablut\Executables\Server.jar"
+$ClassPath = "$ScriptDir\bin;$ScriptDir\TablutCompetition-master\Tablut\Executables\Server.jar;$ScriptDir\TablutCompetition-master\Tablut\lib\*"
 
 java -cp $ClassPath tablut.engine.TablutAgentClient $Role $Timeout $ServerIp

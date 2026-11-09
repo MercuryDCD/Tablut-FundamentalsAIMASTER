@@ -9,6 +9,8 @@ Tablut.ova
 *.class
 build/
 bin/
+bin_prev/
+temp_prev*/
 out/
 target/
 
@@ -24,8 +26,12 @@ logs/
 garbage/
 *.log
 *.tmp
+*.csv
 __AGENT_CACHE__*.txt
 team/
+competitors/
+__pycache__/
+*.py[cod]
 
 # Eclipse IDE
 .metadata

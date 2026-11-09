@@ -28,7 +28,7 @@ Parallelizing alpha-beta search on shared-memory multi-core systems is tradition
 |                        ▼                     ▼                          |
 |       ┌─────────────────────────────────────────────────────────┐       |
 |       │         GLOBAL LOCKLESS TRANSPOSITION TABLE             │       |
-|       │           2^21 Entries (~32 MB, Zero Locks)             │       |
+|       │           2^23 Entries (~134 MB, 2-Slot Buckets)        │       |
 |       │          Bob Hyatt's XOR Verification Invariant         │       |
 |       └─────────────────────────────────────────────────────────┘       |
 +-------------------------------------------------------------------------+
@@ -41,21 +41,27 @@ There are no thread locks, no condition variables, and zero memory allocation. O
 
 ---
 
-## 2. Lockless Transposition Table: Hyatt's XOR Invariant
+## 2. Lockless Transposition Table: Hyatt's XOR Invariant & 2-Slot Buckets
 
 A shared Transposition Table accessed concurrently by 4 threads risks **data races**. If Thread $A$ writes an entry while Thread $B$ is reading it, Thread $B$ might read a "torn" 64-bit word (a hybrid entry with part of the old state and part of the new state), leading to corrupted moves or false cutoffs.
 
 Synchronizing access via Java locks (`ReentrantLock`, `synchronized`, or `StampedLock`) degrades performance: thread contention on 20+ million operations per second destroys throughput.
 
-`TranspositionTable.java` implements **Bob Hyatt's Lockless XOR Algorithm**, completely eliminating synchronization primitives:
+`TranspositionTable.java` implements **Bob Hyatt's Lockless XOR Algorithm** combined with a **2-Slot Bucket architecture**, completely eliminating synchronization primitives:
 
-### 2.1 Parallel Primitive Arrays
-The table stores $2^{21} = 2,097,152$ entries using two parallel primitive arrays (~32 MB of heap memory):
+### 2.1 Parallel Primitive Arrays & 2-Slot Layout
+The table stores $2^{23} = 8,388,608$ entries organized into $4,194,304$ buckets using two parallel flat primitive arrays (~134 MB of heap memory):
 
 ```java
-private final long[] tableLocks = new long[TABLE_SIZE];
-private final long[] tableData  = new long[TABLE_SIZE];
+private final long[] tableLocks = new long[size]; // 8,388,608 slots
+private final long[] tableData  = new long[size]; // 8,388,608 slots
 ```
+
+Each bucket $b$ contains two contiguous slots:
+* **Slot 0 (`idx = 2 * b`): Depth-Preferred Slot.**
+  Stores high-depth strategic evaluations. A new entry replaces Slot 0 only if $d_{\text{new}} \ge d_{\text{old}}$ or if the existing entry belongs to an older search age.
+* **Slot 1 (`idx = 2 * b + 1`): Always-Replace Fallback Slot.**
+  Overwritten on every write collision, capturing short-lived tactical transpositions without dislodging deep nodes from Slot 0.
 
 * `tableData[index]`: A packed 64-bit integer encoding move, score, depth, node type flag, and table age.
 * `tableLocks[index]`: An XOR-masked verification word:
@@ -72,11 +78,14 @@ $$\text{tableLocks}[\text{index}] = \text{zobristHash} \oplus \text{tableData}[\
 ```
 
 ### 2.2 Atomic Verification on Probe
-When a thread probes index $i$ in the table:
+When a thread probes a position with hash `zobristHash`:
+1. It computes bucket index `b = (int)(zobristHash & bucketMask)`.
+2. It tests Slot 0 (`idx = 2 * b`). If valid and matching, it uses Slot 0.
+3. If Slot 0 misses, it immediately tests Slot 1 (`idx = 2 * b + 1`).
 
 ```java
-long data = tableData[index];
-long lock = tableLocks[index];
+long data = tableData[slotIdx];
+long lock = tableLocks[slotIdx];
 
 if ((lock ^ data) == zobristHash) {
     // Valid entry: data is consistent and matches current position

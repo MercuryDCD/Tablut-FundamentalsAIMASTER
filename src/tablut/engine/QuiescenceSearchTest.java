@@ -85,6 +85,7 @@ public final class QuiescenceSearchTest {
         System.out.print("Test 3: Horizon Effect counter-capture trap avoidance... ");
         FastState state = new FastState();
         QuiescenceSearch qs = new QuiescenceSearch();
+        qs.setUseHeuristicEvaluation(false);
 
         // Position where White capturing Black on e4 invites Black at a4 to counter-capture on e3
         state.board[BoardConstants.coord(3, 4)] = BoardConstants.BLACK; // e4
@@ -93,7 +94,7 @@ public final class QuiescenceSearchTest {
         state.board[BoardConstants.coord(2, 2)] = BoardConstants.WHITE; // c3
         state.turn = BoardConstants.WHITE_TURN;
 
-        int staticBefore = qs.isUseHeuristicEvaluation() ? HeuristicEvaluation.evaluate(state) : BaselineEvaluation.evaluate(state);
+        int staticBefore = BaselineEvaluation.evaluate(state);
         int qsScore = qs.search(state, -10000, 10000, 0, 1);
 
         // The naive 1-ply capture would score -150, but QS discovers the counter-capture

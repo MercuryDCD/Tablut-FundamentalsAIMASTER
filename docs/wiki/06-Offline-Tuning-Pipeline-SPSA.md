@@ -24,11 +24,11 @@ Tuning heuristic parameters requires playing hundreds of thousands of games to a
 
 ## 2. Simultaneous Perturbation Stochastic Approximation (SPSA)
 
-The heuristic engine is governed by $p = 17$ continuous parameters. Traditional gradient estimation via Finite Differences requires perturbing each parameter individually:
+The heuristic engine is governed by $p = 22$ continuous parameters (`NUM_WEIGHTS = 22`). Traditional gradient estimation via Finite Differences requires perturbing each parameter individually:
 
-$$\text{Finite Differences Cost} = 2 \times p = 34 \text{ evaluations per gradient step}$$
+$$\text{Finite Differences Cost} = 2 \times p = 44 \text{ evaluations per gradient step}$$
 
-Playing $N = 100$ games per evaluation would require 3,400 games just to take a single gradient step. In noisy environments where game outcomes are binary (win, loss, draw), finite difference optimization is computationally intractable.
+Playing $N = 100$ games per evaluation would require 4,400 games just to take a single gradient step. In noisy environments where game outcomes are binary (win, loss, draw), finite difference optimization is computationally intractable.
 
 ### 2.1 The SPSA Gradient Estimator
 SPSA estimates the entire $p$-dimensional gradient vector using only **two evaluations**, regardless of how many parameters are being tuned:
@@ -92,17 +92,30 @@ In Tablut, repetitive play can cause engines to drift into sterile, cycling draw
 
 ---
 
-## 3. Curriculum Training & Overnight Pipeline
+## 3. Curriculum Training & Overnight Pipeline (`scripts/train_overnight.py`)
 
-Tuning all 17 parameters simultaneously at deep search depths is computationally expensive. The Python optimization suite (`train_spsa.py`, `train_overnight.py`) implements a staged curriculum:
+Tuning all 22 parameters simultaneously at deep search depths without preconditioning can induce gradient noise. The automated multi-night optimization pipeline (`train_overnight.py`) implements a staged two-phase curriculum with anytime interrupt safety:
 
-### 3.1 Multi-Stage Staging
-* **Stage 1 (Positional Warm-up):**
-  Executes at search depth $d = 3$ with $N = 60$ games per iteration. Focuses on broad positional weights (`whitePiece`, `blackPiece`, `kingDistance`, `rhombusBlockade`) to establish stable macroscopic play.
-* **Stage 2 (Tactical Refinement):**
-  Transitions to search depth $d = 4$ with $N = 80$ games per iteration. Tunes subtle tactical and micro-mobility weights (`kingSingleEscape`, `blackConnectedChains`, `kingOpenFieldContainment`, `campFrontPreserved`).
+### 3.1 Two-Phase Training Strategy
+* **Phase 1: Positional & Acclimatization Warm-up (`--warmup-iters 300`):**
+  - **Search Depth:** Depth 3 + Quiescence search.
+  - **Match Sample:** $N = 60$ games per step with strict color balancing.
+  - **Target Subspace:** 7 key spatial parameters (`kingOpenFieldContainment`, `blackConnectedChains`, `rhombusBlockade`, `campFrontPreserved`, `diamondOccupancy`, `kingDefenderShieldCohesion`, `whitePawnDispersionPenalty`).
+  - **Objective:** Calibrates the relative magnitude of spatial weights without destabilizing macroscopic piece values.
+* **Phase 2: Global Covariance Fine-Tuning (`--depth 4`):**
+  - **Search Depth:** Depth 4 + Quiescence search.
+  - **Match Sample:** $N = 80$ games per step (reducing gradient variance across 22 dimensions).
+  - **Target Subspace:** All 22 parameters tuned simultaneously (`all`).
+  - **Objective:** Eliminates short-horizon Depth 3 bias, tuning compound terms (`kingSafeForkThreat`, `campPinchTraps`, `throneAnvilThreats`). Runs continuously in anytime mode.
 
-### 3.2 Warm Restarts & Session-Relative Iteration Management
+### 3.2 Automated Checkpoint & Safe Termination
+The script supports `--auto-apply`, which handles graceful `Ctrl+C` interrupts:
+```bash
+python scripts/train_overnight.py --skip-warmup --depth 4 --auto-apply
+```
+When interrupted, it atomically writes the current best weights to `checkpoint_weights.json`, invokes `apply_weights.py` to patch `HeuristicWeights.java`, recompiles the Java engine, and verifies test suites.
+
+### 3.3 Warm Restarts & Session-Relative Gain Scheduling
 When resuming training from a saved checkpoint, naive SPSA implementations apply the decayed iteration counter $k$, resulting in near-zero learning rates ($a_k \approx 0$).
 
 `train_spsa.py` implements a `--warm-restart` flag. It preserves the accumulated weight vector from `checkpoint_weights.json` but resets the step-size schedule to an active exploratory range ($a_k \approx 1.50$), allowing the optimizer to escape local plateaus during overnight runs.
@@ -133,3 +146,17 @@ python scripts/apply_weights.py --input checkpoint_weights.json --compile
 ```
 
 The script verifies syntax, substitutes the weight constants, triggers a clean build via `javac`, and executes the regression test suite (`RuleVerificationTest`, `SearchEngineTest`) to confirm that zero-allocation invariants remain satisfied.
+
+---
+
+## 5. Feature Orthogonality & SVD/PCA Audit (`scripts/analyze_feature_covariance.py`)
+
+In 22-dimensional heuristic spaces, collinearity between features (e.g., `rhombusBlockade` vs. `blackConnectedChains`) can cause SPSA perturbations to cancel each other out, stalling optimization.
+
+`scripts/analyze_feature_covariance.py` provides an offline audit tool:
+```bash
+python scripts/analyze_feature_covariance.py --states 20000 --generate
+```
+1. **Matrix Extraction:** `FeatureMatrixGenerator.java` extracts raw feature vectors $\mathbf{f}(s) \in \mathbb{R}^{22}$ from 20,000 board positions generated by headless self-play.
+2. **Pearson Correlation Matrix $\mathbf{R}$:** Flags any feature pair with correlation $|r| > 0.85$ for decoupling or regularization.
+3. **Singular Value Decomposition (SVD):** Evaluates the condition number $\kappa(\mathbf{X})$ and spectral decay to verify that all 22 features contribute independent geometric information to the evaluation function.

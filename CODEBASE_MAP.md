@@ -14,9 +14,10 @@
                                                      |
 +----------------------------------------------------+----------------------------------------------------+
 |                                         SEARCH & DECISION CORE                                          |
-|  SearchEngine.java (IDS + Negamax Alpha-Beta + Dynamic Cutoffs)                                         |
-|    |---> OpeningBook.java (D4 Dihedral Symmetry Group, 8-fold compression, < 0.01 ms)                  |
-|    |---> TranspositionTable.java (2^21 parallel primitive arrays, Zobrist 64-bit key, ply-normalized)|
+|  SearchEngine.java (IDS + Negamax PVS + Dynamic Cutoffs + Singular Extensions + Anti-Hanging)          |
+|    |---> TacticalCutoffs.java (O(1) analytic score-bounded mate & escape cutoffs)                       |
+|    |---> OpeningBook.java (D4 Dihedral Group, 8-fold compression, Throne retention sanitation)          |
+|    |---> TranspositionTable.java (2^23 entries / 134 MB, 2-slot buckets: depth-preferred + replace)    |
 |    |---> MoveOrderer.java (5 tiers: TT > Win > Custodian Captures > Killers > History heuristic)        |
 |    |---> QuiescenceSearch.java (Tactical capture resolution, Stand-pat, Delta pruning)                  |
 +---------------------------------------------------------------------------------------------------------+
@@ -24,9 +25,9 @@
 +----------------------------------------------------+----------------------------------------------------+
 |                                      HEURISTIC EVALUATION ENGINE                                        |
 |  HeuristicEvaluation.java (Negamax orchestration: WhiteHeuristics - BlackHeuristics)                    |
-|    |---> HeuristicWeights.java (17 parameterized weights, primitive serialization for SPSA)             |
-|    |---> WhiteHeuristics.java (King escape corridors, 2-way forks, Diamond centers, King vulnerability)|
-|    |---> BlackHeuristics.java (8-point Rhombus blockade, "Keep the Fronts", King encirclement)          |
+|    |---> HeuristicWeights.java (22 parameterized weights, primitive serialization for SPSA)             |
+|    |---> WhiteHeuristics.java (SAFE_FORKS 2-step escape, Shield cohesion, Dispersion, Corridor safety)  |
+|    |---> BlackHeuristics.java (8-point Rhombus blockade, Camp pinch traps, Empty Throne anvils)         |
 |    |---> BaselineEvaluation.java (Fallback fast material & escape counter for baseline testing)         |
 +---------------------------------------------------------------------------------------------------------+
                                                      |
@@ -162,13 +163,14 @@
 * **Path:** [`src/tablut/engine/SearchEngine.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/SearchEngine.java)
 * **Purpose:** Master search orchestrator combining Iterative Deepening Search (IDS), Negamax $\alpha$-$\beta$, Transposition Table, Move Ordering, and Quiescence Search.
 * **Constants & Settings:**
-  * `MAX_DEPTH = 32`, `WIN_THRESHOLD = 99,000`, `DEFAULT_BRANCHING_FACTOR = 4.0`.
-  * `timeSafetyRatio = 0.90` (Uses 90% of allowed budget; 10% safety margin).
+  * `MAX_DEPTH = 32`, `WIN_THRESHOLD = 99,000`, `DEFAULT_BRANCHING_FACTOR = 3.2`.
+  * `timeSafetyRatio = 0.94` (Uses 94% of allowed budget; apura el tiempo con 6% de margen de seguridad).
 * **Two-Tier Dynamic Time Cutoff:**
   1. *Tier 1 (Predictive Soft Cutoff):* At root of depth $d+1$, if $T_{\text{elapsed}} + T_d \times b_{\text{eff}} > T_{\text{budget}}$, aborts next depth iteration before starting.
   2. *Tier 2 (Emergency Hard Cutoff):* Inside `negamax()`, checks `(nodesVisited & 4095) == 0`. If `currentTime >= hardDeadline`, sets `stopped = true` and returns immediately.
 * **Terminal Scoring:** `WIN_SCORE - ply` (Shortest path to victory maximizes score; delay of inevitable loss minimizes penalty).
 * **Principal Variation Search (PVS / NegaScout):** Evaluates the first candidate move (PV / TT move) with the full window $[\alpha, \beta]$. All subsequent moves are probed with minimal null-window $[-\alpha-1, -\alpha]$. Full re-search $[-\beta, -\alpha]$ is executed only if the scout probe fails high ($> \alpha$). Reduces explored nodes by 7.7% and runtime by 31.7% at depth 5.
+* **Root Anti-Hanging Move Tie-Breaker (Phase 13 Pillar 3):** Evaluates `leavesFriendlyPieceHanging(rootState, move)` across near-equivalent candidate moves ($\Delta \le 30$ cp of `bestScoreThisDepth`). Discards candidate moves that leave friendly pieces en prise to an immediate 1-ply custodian capture in favor of the safest tactical move.
 * **Aspiration Windows:** For depths $d \ge 4$, restricts initial search bounds to $[S_{d-1} - 120, S_{d-1} + 120]$ centipawns around the previous depth's score. On fail-low or fail-high, gracefully re-searches with $[-\infty, +\infty]$.
 * **Two-Fold Repetition Detection & GHI Safety:** Evaluates states repeating game history or current search path as `DRAW_SCORE = 0`. Crucially, Graph History Interaction (GHI) tracking via `repetitionEventCounter` prevents storing path-dependent cycle evaluations into the Transposition Table, eliminating global TT poisoning.
 * **On-Demand Lazy Move Selection:** Integrates `moveOrderer.scoreMoves` and `selectBest`, sorting only up to the cutoff move and eliminating $O(N^2)$ sorting overhead on cut-nodes.
@@ -194,9 +196,15 @@
 
 ---
 
-### `TranspositionTable.java`
+### `TranspositionTable.java` (Phase 6, 13)
 * **Path:** [`src/tablut/engine/TranspositionTable.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/TranspositionTable.java)
-* **Purpose:** Zero-allocation, lock-free hash table indexing $2^{21}$ ($2,097,152$) states using Bob Hyatt's Lockless XOR verification (~32 MB RAM).
+* **Purpose:** Zero-allocation, lock-free hash table scaled to $2^{23}$ ($8,388,608$) entries (~134 MB RAM) featuring a 2-slot bucket architecture and Bob Hyatt's Lockless XOR verification.
+* **2-Slot Bucket Architecture (Phase 13 Pillar 4):**
+  * Each bucket contains 2 slots:
+    * **Slot 0 (Depth-Preferred):** Preserves high-depth strategic evaluations from deep iterations.
+    * **Slot 1 (Always-Replace):** Captures recent tactical transpositions, preventing local search thrashing on shallow cutoffs.
+  * *Dual Retention under Collision:* Two distinct positions colliding at the same bucket index are simultaneously retained (Slot 0 + Slot 1) without eviction.
+  * *Promotion Policy:* If a search at Slot 1 exceeds the depth of Slot 0, the entry is promoted to Slot 0, and the previous Slot 0 entry is demoted to Slot 1.
 * **Hyatt Lockless XOR Layout:**
   * `long[] tableLocks`: stores `zobristHash ^ tableData[i]`.
   * `long[] tableData`: packed 64-bit primitive word containing `score` (24 bits signed), `move` (16 bits unsigned), `depth` (8 bits), `flag` (8 bits), `age` (8 bits).
@@ -236,7 +244,7 @@
 
 ---
 
-### `OpeningBook.java`
+### `OpeningBook.java` (Phase 3, 9, 13)
 * **Path:** [`src/tablut/engine/OpeningBook.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/OpeningBook.java)
 * **Purpose:** Instant opening move retrieval ($< 0.01$ ms) during turns 1–5, saving computation time for midgame transitions.
 * **$D_4$ Dihedral Symmetry Group (8-fold compression):**
@@ -244,50 +252,73 @@
   * Precomputed tables: `TRANSFORM[8][81]` and `INVERSE_TRANSFORM[8][81]`.
   * Multi-ply depth: 24 canonical Ashton opening lines (extended up to 6 plies), storing 98 canonical states expanded to **784 precomputed opening states**.
   * Peer Counter-Lines: Includes specific empirical counters against peer engines (e.g. Luca's `f1f3` countered with `d5d6`, `e6f6` countered with `e8g8`).
+  * **Throne Retention Sanitation (Phase 13 Pillar 1):** Deprecates all voluntary King Throne exits (`e5 -> ...`) in early opening lines, anchoring the King on `e5` while defenders construct outer corridors. Adds an invariant check in `addLine` rejecting any move from `THRONE` with `IllegalArgumentException`.
 * **Modes:**
   * `greedy = true`: Deterministic selection of highest-weighted move (Tournament mode).
   * `greedy = false`: Weighted stochastic sampling (Self-play parameter tuning mode).
 
 ---
 
-## 4. Parameterized Heuristic Engine (Phase 4 & 9)
-
-### `HeuristicWeights.java`
-* **Path:** [`src/tablut/engine/HeuristicWeights.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/HeuristicWeights.java)
-* **Purpose:** Container holding all $17$ tunable heuristic parameters for automated optimization (SPSA / GA).
-* **Parameter Breakdown:**
-  * **White Parameters:**
-    * `whitePiece (125)`: Value per living White defender.
-    * `blackCaptured (96)`: Reward per eliminated Black attacker.
-    * `kingDistance (30)`: Penalty per step King is away from nearest perimeter escape.
-    * `kingSingleEscape (1446)`: Bonus for 1 clear orthogonal corridor to escape square.
-    * `kingDoubleEscape (18413)`: Decisive bonus for 2+ open escape corridors (unblockable 2-way fork).
-    * `diamondOccupancy (65)`: Bonus per soldier occupying Diamond/Windmill centers.
-    * `kingMobility (15)`: Bonus per legal orthogonal sliding square for the King.
-    * `kingVulnerabilityPenalty (219)`: Penalty when King is vulnerable to immediate custodian capture.
-  * **Black Parameters:**
-    * `blackPiece (105)`: Value per living Black attacker.
-    * `whiteCaptured (194)`: Reward per eliminated White defender (attrition strategy).
-    * `rhombusBlockade (88)`: Bonus per Black soldier on the 8-point Rhombus ring.
-    * `campFrontPreserved (61)`: Bonus per preserved camp doorway square ("Keep the Fronts").
-    * `kingSurroundedThrone (235)`: Bonus per hostile flanker surrounding King on/near Throne.
-    * `kingContainment (38)`: Confinement bonus for keeping King near central Throne.
-    * `blackMobility (7)`: Active mobility bonus for Black pawns.
-    * `blackConnectedChains (12)`: Bonus for pairs of adjacent Black pawns (orthogonal and diagonal links).
-    * `kingOpenFieldContainment (18)`: Swarm bonus for Black pieces within 4 Manhattan steps of King when $d(\text{King}, \text{Throne}) \ge 2$.
-* **Serialization:** `toArray()` and `fromArray(int[])` supporting 15, 16, and 17 parameter arrays seamlessly for automated SPSA tuning.
+### `TacticalCutoffs.java` (Phase 12 Pillar 1)
+* **Path:** [`src/tablut/engine/TacticalCutoffs.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/TacticalCutoffs.java)
+* **Purpose:** High-performance $O(1)$ analytic score-bounded tactical mate cutoffs evaluating forced 1-ply and 2-ply terminal wins/losses before expanding search subtrees.
+* **Key Methods:**
+  * `detectForcedTacticalMate(FastState state, int ply)`:
+    * Returns `WIN_SCORE - ply` if the active player has an immediate 1-move win (`hasImmediateKingEscape` for White, `hasImmediateKingCapture` for Black).
+    * Returns `-(WIN_SCORE - (ply + 1))` if the opponent threatens an immediate unblockable mate on the following ply (e.g. White commanding an unblockable 2-way escape fork that Black cannot intercept in 1 move).
+  * `hasImmediateKingEscape(FastState state)`: Ray-casts from the King square to check if any open line directly reaches a perimeter win square.
+  * `countKingEscapeCorridors(FastState state, int kingSq)`: Counts unobstructed orthogonal rays from the King to perimeter win squares.
+  * `canBlackSlideTo(FastState state, int targetSq)`: Checks if any active Black soldier has a legal, unobstructed rook slide to `targetSq` respecting Ashton camp entry/exit rules.
 
 ---
 
-### `WhiteHeuristics.java`
+## 4. Parameterized Heuristic Engine (Phase 4, 9, 10 & 12)
+
+### `HeuristicWeights.java`
+* **Path:** [`src/tablut/engine/HeuristicWeights.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/HeuristicWeights.java)
+* **Purpose:** Container holding all $21$ tunable heuristic parameters for automated optimization (SPSA / GA).
+* **Parameter Breakdown:**
+  * **White Parameters:**
+    * `whitePiece (115)`: Value per living White defender.
+    * `blackCaptured (125)`: Reward per eliminated Black attacker.
+    * `kingDistance (31)`: Penalty per step King is away from nearest perimeter escape.
+    * `kingSingleEscape (1412)`: Bonus for 1 clear orthogonal corridor to escape square.
+    * `kingDoubleEscape (18269)`: Decisive bonus for 2+ open escape corridors (unblockable 2-way fork).
+    * `diamondOccupancy (37)`: Bonus per soldier occupying Diamond/Windmill centers.
+    * `kingMobility (12)`: Bonus per legal orthogonal sliding square for the King.
+    * `kingVulnerabilityPenalty (142)`: Penalty when King is vulnerable to immediate custodian capture.
+    * `kingDefenderShieldCohesion (24)`: [Phase 12] Dense proximity bonus for White pawns forming an interlocking escort shield within Chebyshev distance 1-2 of the King.
+    * `whitePawnDispersionPenalty (14)`: [Phase 12] Non-linear quadratic penalty for White pawns scattered $> 3$ Manhattan steps from the King (cures the "Decoy Pawn" dispersion syndrome).
+    * `kingSafeForkThreat (2800)`: [Phase 13 Pillar 2] Proactive bonus for King threatening an unblockable 2-step escape fork outside the Throne (`SAFE_FORKS`).
+  * **Black Parameters:**
+    * `blackPiece (136)`: Value per living Black attacker.
+    * `whiteCaptured (176)`: Reward per eliminated White defender (attrition strategy).
+    * `rhombusBlockade (70)`: Bonus per Black soldier on the 8-point Rhombus ring.
+    * `campFrontPreserved (77)`: Bonus per preserved camp doorway square ("Keep the Fronts").
+    * `kingSurroundedThrone (50)`: Bonus per hostile flanker surrounding King on/near Throne.
+    * `kingContainment (43)`: Confinement bonus for keeping King near central Throne.
+    * `blackMobility (8)`: Active mobility bonus for Black pawns.
+    * `blackConnectedChains (18)`: Bonus for pairs of adjacent Black pawns (orthogonal and diagonal links).
+    * `kingOpenFieldContainment (16)`: Swarm bonus for Black pieces within 4 Manhattan steps of King when $d(\text{King}, \text{Throne}) \ge 2$.
+    * `campPinchTraps (35)`: [Phase 12] Tactical bonus for Black threatening active camp-wall pinch traps against White defenders with unobstructed approach lines.
+    * `throneAnvilThreats (28)`: [Phase 12] Tactical bonus for active lines-of-sight using the empty central Throne as an anvil barrier for captures.
+* **Serialization:** `toArray()` and `fromArray(int[])` supporting 15, 16, 17, 21, and 22 parameter arrays seamlessly for backward compatibility and automated SPSA tuning.
+
+---
+
+### `WhiteHeuristics.java` (Phase 4, 12, 13)
 * **Path:** [`src/tablut/engine/WhiteHeuristics.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/WhiteHeuristics.java)
 * **Purpose:** Domain evaluation functions representing the White (Defender) perspective.
 * **Key Features:**
+  * Proactive 2-Step Escape Forks (`computeKingSafeForks` / `isSafeForkSquare`): [Phase 13 Pillar 2] Evaluates squares $S$ reachable in 1 move by an open-field King ($kSq \ne \text{THRONE}$) that create $\ge 2$ unblocked corridors without being capturable in 1 reply ply by Black.
   * Strict 20-Exit Geometry (`BoardConstants.MIN_DISTANCE_TO_ESCAPE`): Evaluates King distance to real escape squares, eliminating the ghost escape bias toward perimeter citadels.
-  * `countEscapeCorridors(state, kRow, kCol)`: Checks all 4 rays from King. If $\ge 2$ corridors are clear to perimeter win squares, awards `kingDoubleEscape`.
+  * Corridor Safety & Reachability (75% Discount): A single open King escape corridor is discounted by 75% if a Black piece can slide orthogonally to intercept or block the exit square in 1 ply.
+  * King-Defender Shield Cohesion: Dense Chebyshev escort reward $\sum \max(0, 3 - d_{\text{cheb}}(w, K))$ keeping defenders tethered to the King.
+  * Quadratic Dispersion Penalty: Non-linear $\sum (d_{\text{manh}}(w, K) - 3)^2$ penalizing defenders that abandon the royal convoy without immediate escape utility.
+  * Empty Throne Anvils: Rewards positioning defenders to exploit the empty Castle ($e5$) as a capture anvil against Black attackers.
   * Diamond Formations: Diamond 1 (`d3, f4, d6, f7`) and Diamond 2 (`f3, d4, f6, d7`). Calculates `Math.max(diamond1, diamond2) * diamondOccupancy`.
   * `computeKingMobility`: Counts empty orthogonal squares reachable by King.
-  * `evaluateKingVulnerability`: Assesses hostile pieces flanking King; correctly recognizes all 16 camp squares as lethal capture anvils (`IS_CAMP`), and detects critical open-field double-hostile pin/capture threats ($+4$).
+  * `evaluateKingVulnerability`: Assesses hostile pieces flanking King; recognizes all 16 camp squares as lethal capture anvils (`IS_CAMP`), and detects critical open-field double-hostile pin/capture threats ($+4$).
 
 ---
 
@@ -295,6 +326,8 @@
 * **Path:** [`src/tablut/engine/BlackHeuristics.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/BlackHeuristics.java)
 * **Purpose:** Domain evaluation functions representing the Black (Attacker) perspective.
 * **Key Features:**
+  * Active Camp-Wall Pinch Traps: Detects 1-ply capture threats where a Black soldier and a Camp wall threaten to sandwich an adjacent White defender.
+  * Empty Throne Anvil Threats: Identifies active tactical lines where an empty Throne ($e5$) serves as an anvil to execute custodian captures on White soldiers.
   * 8-Point Rhombus Blockade: `c2, g2, b3, h3, b7, h7, c8, g8`. Intercepts all diagonal and orthogonal escape vectors radiating from center.
   * Camp Fronts: `e2` (South), `e8` (North), `b5` (West), `h5` (East). Rewards keeping doorway soldiers in place to maintain the perimeter cordon.
   * Connected Blockade Chains (`countConnectedChains`): Measures structural density of Black walls by counting orthogonal and diagonal connections between Black soldiers.
@@ -373,11 +406,21 @@
 | **`HeuristicEvaluationTest.java`** | Verifies symmetric score cancellation at initial state ($0.0$), 2-way escape detection, 8-point rhombus blockade, camp front discipline, and measures 30.9M evals/sec. |
 | **`Phase6EnhancementsTest.java`** | Verifies lazy move selection, Hyatt Lockless XOR TT safety, GHI repetition bypass, 20-exit geometry, and connected blockade chains. |
 | **`Phase7OptimizationsTest.java`** | Verifies tactical Quiescence safeguards (delta pruning bypass on King escape), camp anvil recognition, open-field pins, Black mobility, PVS depth-5 acceleration (-7.7% nodes, -31.7% time), and HeadlessTournament ThreadLocal reusability. |
+| **`Phase9OptimizationsTest.java`** | Verifies multi-ply $D_4$ opening book expansion (784 variations), early terminal mate cutoffs, and open-field King containment gradient. |
+| **`Phase12OptimizationsTest.java`** | Validates score-bounded analytic mate cutoffs, King shield cohesion & dispersion penalties, compound spatial interaction features, dynamic empirical branching utilization, and singular PVS tactical extensions. |
+| **`Phase13RefinementsTest.java`** | Validates opening book Throne retention sanitation across all $D_4$ symmetries, `SAFE_FORKS` 2-step escape detection & trap filtering, root anti-hanging tie-breaker, and 2-slot bucket TT scaling ($2^{23}$ entries / 134 MB). |
 
 ---
 
 ## 7. Execution Scripts & Environment Files
 
+> [!TIP]
+> For the comprehensive operations manual with copy-pasteable CLI commands, parameters, and overnight training instructions, see **[`SCRIPTS.md`](SCRIPTS.md)**.
+
+* **`src/tablut/engine/FeatureMatrixGenerator.java`**:
+  * High-speed RAM state generator exporting 21-parameter feature vectors across thousands of simulated positions to CSV for covariance and SVD analysis.
+* **`scripts/analyze_feature_covariance.py`**:
+  * Feature orthogonality and covariance audit tool: computes Pearson correlation matrix, condition number $\kappa(\mathbf{X})$, and Singular Value Decomposition (SVD) principal variance spectrum.
 * **`scripts/train_overnight.py`**:
   * Automated 2-phase overnight tuning pipeline: Phase 1 positional warm-up (Depth 3, $N=60$) $\to$ Phase 2 global fine-tuning (Depth 4, $N=80$).
   * Graceful `SIGINT` trapping, atomic state checkpointing, and automatic binary recompilation (`--auto-apply`).
@@ -390,12 +433,22 @@
 * **`scripts/run_tournament.py`**:
   * Reusable head-to-head ablation benchmark tool comparing current heuristic weights against original literature defaults.
   * Supports 50/50 color alternation, dynamic parameter extraction, 95% confidence intervals, and Elo delta estimation.
-* **`scripts/match_official.ps1`**:
-  * Automated runner for single matches on the official `Server.jar` referee (ports 5800/5801) vs `RANDOM`, teammate `LUCA` (`team/luca`), or self-play.
+* **`scripts/tournament_vs_opponents.ps1`**:
+  * Unified multi-competitor tournament harness supporting UNIBO champion engines (`brainmates`, `thor`), teammate `luca`, or round-robin `all` with strict color symmetry.
 * **`scripts/tournament_vs_luca.ps1`**:
   * End-to-end competition tournament runner pitting Antigravity against teammate Luca's `TablutNegamaxClient` (`team/luca`, `NeuralEvaluator`, 40 features, 4-thread Lazy SMP) at full timeout (45s/mov).
+* **`scripts/match_official.ps1`**:
+  * Automated runner for single matches on the official `Server.jar` referee (ports 5800/5801) vs `RANDOM`, teammate `LUCA` (`team/luca`), or self-play.
+* **`scripts/match_versions.ps1`**:
+  * Automated head-to-head benchmarking harness between current local code and a historical Git commit/tag with color balance and log capture.
+* **`scripts/test_match.ps1`**:
+  * Fast end-to-end smoke test against `RandomPlayer.jar`.
+* **`scripts/mine_openings.py`**:
+  * Automated referee log parser extracting multi-ply opening lines and branch winrates from `logs/*_server.log`.
 * **`checkpoint_weights.json`**:
   * Atomic state file storing active and best heuristic parameter vectors, win rates, and iteration metadata.
+* **`SCRIPTS.md`**:
+  * Complete operational runbook and central command manual for training, tournaments, testing, and official match execution.
 * **`runmyplayer.sh`** / **`runmyplayer.ps1`**:
   * Official execution wrappers conforming to `/home/tablut/tablut/runmyplayer.sh <ROLE> <TIMEOUT_SECONDS> <SERVER_IP>`.
   * Strict POSIX `LF` line endings for Linux Debian VM execution.

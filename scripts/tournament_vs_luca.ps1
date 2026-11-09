@@ -1,6 +1,8 @@
 param(
     [int]$Games = 2,
-    [int]$Timeout = 45,
+    [int]$Timeout = 15,
+    [string]$LucaAlgo = "mcts",
+    [string]$LucaWeights = "",
     [switch]$EnableGui
 )
 
@@ -13,17 +15,23 @@ $RunPlayer = Join-Path $BaseDir "runmyplayer.ps1"
 $LucaBin = Join-Path $BaseDir "team\luca\Tablut\bin"
 $LucaLib = Join-Path $BaseDir "team\luca\Tablut\lib\*"
 $LucaCp = "$LucaBin;$LucaLib"
-$LucaWeights = Join-Path $BaseDir "team\luca\Tablut\pretrained_weights\pretrained_default.txt"
+
+if ([string]::IsNullOrWhiteSpace($LucaWeights)) {
+    $LucaWeights = Join-Path $BaseDir "team\luca\Tablut\pesi_v4\cnn_t1000000_v4.txt"
+} elseif (!(Test-Path $LucaWeights)) {
+    $cand = Join-Path $BaseDir "team\luca\Tablut\pesi_v4\$LucaWeights"
+    if (Test-Path $cand) { $LucaWeights = $cand }
+}
 
 $LogsDir = Join-Path $BaseDir "logs"
 if (!(Test-Path $LogsDir)) { New-Item -ItemType Directory -Path $LogsDir | Out-Null }
 
 Write-Host "================================================================================" -ForegroundColor Cyan
-Write-Host "  TEAM BENCHMARK TOURNAMENT: ANTIGRAVITY vs TEAMMATE LUCA (MLP ARCHITECTURE)" -ForegroundColor Cyan
+Write-Host "  TEAM BENCHMARK TOURNAMENT: ANTIGRAVITY vs TEAMMATE LUCA (DAJE GEPPETTO V4)" -ForegroundColor Cyan
 Write-Host "  Total Games         : $Games (Alternating White / Black symmetry)"
-Write-Host "  Decision Timeout    : ${Timeout}s per move (Full Competition Budget)"
-Write-Host "  Luca Architecture   : Negamax + PVS + 4-thread Lazy SMP + NeuralEvaluator (40 features)"
-Write-Host "  Antigravity Engine  : ParallelSearchEngine (4 vCPUs) + Ashton Heuristics (938k SPSA)"
+Write-Host "  Decision Timeout    : ${Timeout}s per move"
+Write-Host "  Luca Architecture   : $LucaAlgo | Weights: $(Split-Path -Leaf $LucaWeights)"
+Write-Host "  Antigravity Engine  : ParallelSearchEngine (4 vCPUs) + Ashton Heuristics (1.3M SPSA)"
 Write-Host "================================================================================" -ForegroundColor Cyan
 
 $results = @()
@@ -58,11 +66,14 @@ for ($g = 1; $g -le $Games; $g++) {
     $startTime = Get-Date
 
     try {
+        $lucaClass = if ($LucaAlgo -eq "mcts") { "it.unibo.ai.didattica.competition.tablut.client.TablutMctsClient" } else { "it.unibo.ai.didattica.competition.tablut.client.TablutNegamaxClient" }
+        $lucaExtra = if ($LucaAlgo -eq "negamax") { "threads=4 order=rec" } else { "threads=4" }
+
         # 1. Start White
         if ($antiRole -eq "WHITE") {
             $whiteProc = Start-Process powershell -ArgumentList "-File `"$RunPlayer`" -Role WHITE -Timeout $Timeout -ServerIp localhost" -RedirectStandardOutput $whiteLog -RedirectStandardError $whiteErr -PassThru
         } else {
-            $whiteProc = Start-Process java -ArgumentList "-cp `"$LucaCp`" it.unibo.ai.didattica.competition.tablut.client.TablutNegamaxClient WHITE $Timeout localhost `"$LucaWeights`" threads=4" -RedirectStandardOutput $whiteLog -RedirectStandardError $whiteErr -PassThru
+            $whiteProc = Start-Process java -ArgumentList "-Xmx4g -cp `"$LucaCp`" $lucaClass WHITE $Timeout localhost `"$LucaWeights`" $lucaExtra" -RedirectStandardOutput $whiteLog -RedirectStandardError $whiteErr -PassThru
         }
         Start-Sleep -Seconds 1
 
@@ -70,7 +81,7 @@ for ($g = 1; $g -le $Games; $g++) {
         if ($antiRole -eq "BLACK") {
             $blackProc = Start-Process powershell -ArgumentList "-File `"$RunPlayer`" -Role BLACK -Timeout $Timeout -ServerIp localhost" -RedirectStandardOutput $blackLog -RedirectStandardError $blackErr -PassThru
         } else {
-            $blackProc = Start-Process java -ArgumentList "-cp `"$LucaCp`" it.unibo.ai.didattica.competition.tablut.client.TablutNegamaxClient BLACK $Timeout localhost `"$LucaWeights`" threads=4" -RedirectStandardOutput $blackLog -RedirectStandardError $blackErr -PassThru
+            $blackProc = Start-Process java -ArgumentList "-Xmx4g -cp `"$LucaCp`" $lucaClass BLACK $Timeout localhost `"$LucaWeights`" $lucaExtra" -RedirectStandardOutput $blackLog -RedirectStandardError $blackErr -PassThru
         }
 
         # 3. Wait for game completion
@@ -136,9 +147,9 @@ for ($g = 1; $g -le $Games; $g++) {
 Write-Host "`n================================================================================" -ForegroundColor Cyan
 Write-Host "  TOURNAMENT RESULTS SUMMARY: ANTIGRAVITY vs LUCA" -ForegroundColor Cyan
 Write-Host "================================================================================" -ForegroundColor Cyan
-$antiWins = ($results | Where-Object { $_.Outcome -eq "ANTIGRAVITY_WIN" }).Count
-$lucaWins = ($results | Where-Object { $_.Outcome -eq "LUCA_WIN" }).Count
-$draws = ($results | Where-Object { $_.Outcome -eq "DRAW" }).Count
+$antiWins = @($results | Where-Object { $_.Outcome -eq "ANTIGRAVITY_WIN" }).Count
+$lucaWins = @($results | Where-Object { $_.Outcome -eq "LUCA_WIN" }).Count
+$draws = @($results | Where-Object { $_.Outcome -eq "DRAW" }).Count
 $antiScore = $antiWins + 0.5 * $draws
 
 Write-Host "Total Games Played : $Games"

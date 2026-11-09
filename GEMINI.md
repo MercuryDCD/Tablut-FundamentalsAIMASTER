@@ -8,6 +8,7 @@ This repository contains the development of an autonomous Artificial Intelligenc
 * This file serves as the **central reference manual** and **context anchor** for both human contributors and AI assistants (e.g., Gemini, Claude) during development.
 * AI tools are used for architecture design, algorithm development, heuristic tuning, code optimization, debugging, and verification against official rules.
 * **Agent Codebase Digest:** For an exhaustive index of all source files, primitive bit-layouts, invariants, and APIs to avoid loading code into context, see [`CODEBASE_MAP.md`](CODEBASE_MAP.md).
+* **Execution & Operations Runbook:** For the consolidated, copy-pasteable catalog of all execution scripts, overnight training pipelines, tournament harnesses, and test runners, see [`SCRIPTS.md`](SCRIPTS.md).
 
 ### 1.2 Language & Collaboration Standards
 * **Working Language:** The project is developed collaboratively with international team members.
@@ -18,6 +19,13 @@ This repository contains the development of an autonomous Artificial Intelligenc
 * **GitHub Repository:** [`https://github.com/MercuryDCD/Tablut-FundamentalsAIMASTER`](https://github.com/MercuryDCD/Tablut-FundamentalsAIMASTER)
 * **Default Branch:** `main`
 * **Remote Tracking URL:** `https://github.com/MercuryDCD/Tablut-FundamentalsAIMASTER.git`
+
+### 1.4 Terminal Command Execution Standard (Direct Copy-Paste)
+* **Zero-Navigation Requirement (MANDATORY):** Whenever the AI assistant suggests or outputs shell/terminal commands to run in this project, they **MUST always be prepended with navigation to the workspace root directory**:
+  ```powershell
+  cd "c:\Users\Dani\Desktop\MASTER IA\Semestre_1\FUNDAMENTALS\TABLUT" ; <command>
+  ```
+* This guarantees all commands can be copied and pasted directly into any terminal prompt without requiring manual directory changes or failing due to current working directory mismatches.
 
 ---
 
@@ -212,7 +220,11 @@ Development follows progressive, pedagogical phases: from basic data structures 
 - [x] **Phase 7: Advanced Tactical Pruning, Search Extensions & Tuning Infrastructure** (Completed, Principal Variation Search (PVS), Aspiration Windows, Quiescence Tactical Safeguards, Zero-Allocation Context Recycling, Corrected Anvil & Pins Heuristics, Active Black Mobility).
 - [x] **Phase 8: Large-Scale Parameter Optimization & Head-to-Head Ablation Benchmarking** (Completed, 938,560 games SPSA overnight optimization, +34.9 Elo gain over baseline, reusable `run_tournament.py` with micro and full-duration time management, empirical resolution of draw rates from 20% down to 0%).
 - [x] **Phase 9: Peer-Engine Benchmarking (Luca's MLP Architecture) & Tactical Refinement Plan** (Completed: 2-0 match victory at 45s/move, Multi-ply $D_4$ opening book expansion to 24 canonical lines/784 symmetric states, adaptive early terminal mate cutoffs reducing mate discovery from 37.7s to 1-5ms, open-field king containment with continuous swarm gradient, 100% verified via `Phase9OptimizationsTest.java`).
-- [x] **Phase 10: Multi-Night Training Strategy & Post-Convergence Progression Roadmap** (Completed: Automated 2-phase pipeline `train_overnight.py` with warm-restart decay and session-relative iteration management, Depth 4 transition with $N=80$, and strategic multi-night progression plan across search tuning, book mining, and VM gauntlet validation).
+-[x] **Phase 10: Multi-Night Training Strategy & Post-Convergence Progression Roadmap** (Completed: Automated 2-phase pipeline `train_overnight.py` with warm-restart decay, Night 1 Depth 4 SPSA completion with 1.307M games / 16.4k iters, discovered key strategic shifts: -79% throne rush penalty, +50% connected black chains, +30% black material preservation, +30% white capture breaker, auto-applied to `HeuristicWeights.java`).
+- [x] **Phase 11: Multi-Competitor Benchmarking Harness & Opening Mining Pipeline** (Completed: Cloned & configured UNIBO champion engines in `competitors/` (`brainmates` - 1st 2020, `thor` - 3rd 2020), isolated in `.gitignore`, built unified `tournament_vs_opponents.ps1` supporting multi-engine round-robins, and created automated opening miner `scripts/mine_openings.py` to extract high-leverage opening lines from referee server logs).
+- [x] **Phase 12: Tactical Safeguards, King Shield Cohesion & Deep Learning Integration (Learnings from Luca's MCTS/CNN)** (Completed: Score-bounded analytic mate/escape cutoffs in $O(1)$, King-Defender shield cohesion & quadratic dispersion penalty, compound spatial interaction features with corridor safety 75% discount, dynamic empirical effective branching $b_{\text{eff}} = \text{clamp}(2.2, 4.5, T_d / T_{d-1})$, singular tactical extensions in PVS, SVD/PCA feature covariance audit tool, and 100% verified via `Phase12OptimizationsTest.java`).
+- [x] **Phase 13: Tactical Refinements, Opening Book Sanitation & 2-Slot TT Scaling (Learnings from Luca's Architecture & 15s Benchmark)** (Completed: Opening book line 1 suicide sanitization, proactive 2-step King escape gradient `SAFE_FORKS`, root anti-hanging tie-breaker, 2-slot bucket TT with always-replace fallback, table scaling to $2^{23}$ entries / 134 MB, verified with 100% pass across all 14 unit test suites).
+- [x] **Phase 14: Post-Autopsy Tactical Hardening & Opening Counter-Strategies** (Completed: P1 Throne abandonment penalty in `WhiteHeuristics.java`, P2 Late Move Reductions (LMR) in `SearchEngine.java` & `ParallelSearchEngine.java`, P3 Quiescence Search tactical extensions for distance $\le 2$ escape maneuvers, P4 Camp perimeter integrity penalty in `BlackHeuristics.java`, P5 `OpeningBook.java` counter-lines vs Luca `d1d3` & brAInmates `f1f4` + Epsilon-Greedy $80/20$ stochastic selection, case-insensitive regex fix in `scripts/mine_openings.py`, 100% verified via `Phase14TacticalHardeningTest.java`).
 
 ---
 
@@ -358,6 +370,10 @@ To avoid wasting valuable compute hours training openings from zero, the book wi
   - Re-invoking with `--resume` seamlessly ingests previous checkpoint weights and pivots to the next stage without losing prior optimization gains.
 
 #### 5.3 Local Execution & Training Guide
+> [!TIP]
+> For the modern consolidated command catalog and operations runbook, see **[`SCRIPTS.md`](SCRIPTS.md)**.
+> For overnight automated training across Phase 1 (warmup) and Phase 2 (global fine-tuning at depth 4), use `python scripts/train_overnight.py --auto-apply`.
+
 * **Automated Cyclical Curriculum Protocol (Overnight Optimization):**
   - **The Tactical Sweet Spot (Depth 3):** Simulates at ~8–12 games/sec across 16 CPU threads, generating 200,000+ games in 8 hours with deep tactical resolution via Quiescence Search (4–9 plies).
   - **Calibrated Hyperparameters:**
@@ -542,8 +558,21 @@ python scripts/apply_weights.py
   2. **Learning Rate Warm-Restart & Session Isolation (`scripts/train_spsa.py`):**
      - *Problem:* After 11,732 prior iterations, standard SPSA power-law decay reduced learning rate $a_k$ to $\approx 0.028$, effectively freezing weight updates upon resuming. Furthermore, absolute iteration thresholding caused premature stops.
      - *Solution:* Implemented `--warm-restart` resetting step-decay $k$ to relative session steps ($a_k \approx 1.50$), restoring exploratory gradient descent power. Fixed `--max-iterations` to evaluate relative session iterations.
+* **Empirical Overnight Training Run & Strategic Discoveries (Night 1 — Depth 4 Global Basin):**
+  - **Volume & Convergence Metrics:** Executed **16,423 iterations** and **1,307,604 games** over 39,574 seconds (~11.0 hours) at 9.2 games/s across 16 worker threads at Depth 4. SPSA perturbation step decayed to $a_k = 0.05$ with positive perturbation win-rate stabilizing at **48.1%** (empirical self-play equilibrium).
+  - **Collapse of Premature Throne Encirclement (`kingSurroundedThrone`: 235 $\to$ 50, -79%):** SPSA resolved a major tactical pathology. In Ashton Tablut, capturing the King on or adjacent to the Throne requires 3–4 Black pieces. Attempting an early rush on the Throne without having sealed the outer perimeter opens immediate escape lanes on the wings for White. SPSA learned to de-prioritize early Throne attacks and redirect focus to perimeter containment.
+  - **Black Doctrinal Evolution (Disciplined Perimeter & Material Conservation):**
+    - *Material Retention (`blackPiece`: 105 $\to$ 136, +30%):* Each alive Black soldier contributes exponentially to perimeter density; premature piece sacrifices are heavily penalized.
+    - *De-emphasizing Central Attrition (`whiteCaptured`: 194 $\to$ 176, -9%):* Reckless hunting of White pawns in the interior was deemphasized, as open trades break the outer cordon.
+    - *Connected Wall Defense:* Replaced rigid 8-tile rhombus occupancy (`rhombusBlockade`: 88 $\to$ 70, -20%) with active doorway defense (`campFrontPreserved`: 61 $\to$ 77, +26%) and interlocking walls (`blackConnectedChains`: 12 $\to$ 18, +50%).
+  - **White Doctrinal Evolution (Active Breaker & Reduced Tactical Paranoia):**
+    - *Blockade Punching (`blackCaptured`: 96 $\to$ 125, +30%):* White aggressively values eliminating Black soldiers to open orthogonal breakout lanes.
+    - *Dynamic Mobility over Static Diamond (`diamondOccupancy`: 65 $\to$ 37, -43%):* Rigid windmill occupancy was devalued to avoid tactical pins against camp walls.
+    - *Elimination of Phantom Fear (`kingVulnerabilityPenalty`: 219 $\to$ 142, -35%):* Trusting Depth 4 + Quiescence search to resolve real capture threats, eliminating overly cautious King stagnation.
+  - **Terminal Scale Invariance:** Escape weights (`kingDoubleEscape` 18,269, `kingSingleEscape` 1,412, `kingDistance` 31) remained stable within $<2\%$, proving decoupling stability.
+  - **Auto-Application:** Checkpoint weights automatically ingested into `HeuristicWeights.java` and recompiled.
 * **Consolidated Multi-Night Optimization Roadmap:**
-  - **Night 1 (Baseline Depth 4 Transition):** 2-phase pipeline (`train_overnight.py`): Phase 1 positional warm-up $\to$ Phase 2 joint Depth 4 optimization ($N=80$, ~1,000 iterations). Eliminates short-horizon bias and settles 17-parameter covariances.
+  - **Night 1 (Baseline Depth 4 Transition) [COMPLETED]:** 2-phase pipeline (`train_overnight.py`): Phase 1 positional warm-up $\to$ Phase 2 joint Depth 4 optimization ($N=80$, 1.307M games across 16.4k iters). Settled 17-parameter covariances, corrected throne rush bias, and auto-applied best weights.
   - **Night 2 (Search & Pruning Hyperparameter Tuning):** Tune tree search dynamics: Aspiration window width ($\delta \approx 35\text{--}50\text{ cp}$), killer move allocation tiers, history heuristic decay rates ($\gamma$), and dynamic time management coefficients ($b_{\text{eff}} \approx 3.5\text{--}4.2$).
   - **Night 3 (Deep Offline Opening Book Mining):** Run high-depth self-play (Depth 7–8 / 15s per move with 4-thread Lazy SMP) across the first 4–6 plies. Encode dominant lines into `OpeningBook.java` using $D_4$ dihedral group symmetry to expand the opening book from 784 states to $>3,000$ solved positions ($< 0.01\text{ ms}$ instant moves, conserving 80–100s clock budget for endgames).
   - **Night 4 (Blunder Mining & Feature Discovery):** Automated parsing of self-play losses and draws against rival engines (e.g., Luca's MLP). Formulate and integrate targeted geometric heuristics for recurring tactical blind spots.
@@ -551,14 +580,178 @@ python scripts/apply_weights.py
 
 ---
 
+### Phase 11: Multi-Competitor Benchmarking Harness & Opening Mining Pipeline [COMPLETED]
+* **Educational & Strategic Objective:** Prevent self-play overfitting and evaluation intransitivity by benchmarking against historical UNIBO tournament champions (`BrAInmates`, `THoR`) and peer architectures (`Luca`), building an automated multi-engine round-robin tournament harness, and mining high-leverage opening lines from referee server logs.
+* **Delivered Infrastructure & Components:**
+  1. **Self-Contained Competitor Ecosystem (`competitors/`):**
+     - `competitors/brainmates/`: UNIBO 2020 1st place champion (`gmurro/tablut`). Standalone precompiled `BrAInmates.jar` with native PowerShell wrapper `runmyplayer.ps1`. Implements classic $\alpha$-$\beta$ Minimax with 8-tile rhombus blockade heuristics.
+     - `competitors/thor/`: UNIBO 2020 3rd place podium (`carlo98/tablut-THOR`). Bitboard-based Java engine compiled into `competitors/thor/bin/` with local build script `compile.ps1` and native `runmyplayer.ps1`. Implements root-level parallel search with "keep the fronts" doorway discipline.
+     - Protected in `.gitignore` to guarantee offline VM self-containment without repo bloat.
+  2. **Unified Multi-Opponent Tournament Harness (`scripts/tournament_vs_opponents.ps1`):**
+     - Parameterized tournament runner: `-Opponent <brainmates|thor|luca|all>`, `-Games <N>`, `-Timeout <sec>`, and `-EnableGui`.
+     - Guarantees strict White/Black color symmetry across pairings to neutralize Ashton board asymmetry.
+     - Decouples concurrent process lifecycles (`Server.jar`, White player, Black player) with safety wall-clock timeouts and independent `stdout`/`stderr` log capture.
+  3. **Automated Opening Miner & Game Log Analyzer (`scripts/mine_openings.py`):**
+     - Automated log parser ingesting referee match records (`logs/*_server.log`).
+     - Reconstructs move sequences across the opening window (default: first 6 plies), aggregating branch win-rates ($W\%, B\%, D\%$).
+     - Identifies high-leverage branches to directly expand canonical lines in `OpeningBook.java`.
+  4. **Telemetry & Log Architecture Documentation:**
+     - Formal distinction between official referee adjudications (`gameLog.txt`, `systemLog.txt`) and engine process captures (`*_antigravity.log`, `*_opp.log`, `*_server.log`).
+
+---
+
+### Phase 12: Tactical Safeguards, King Shield Cohesion & Deep Learning Integration (Learnings from Luca's MCTS/CNN) [COMPLETED]
+* **Educational & Strategic Rationale:**
+  - *Post-Mortem of Head-to-Head Benchmark vs. Luca's MCTS (v4 CNN weights, 15s/move):*
+    - **Match Result:** **1 - 1** (Both engines won as Black).
+    - *Game 1 (Antigravity WHITE vs. Luca MCTS BLACK):* White lost in 48 plies. Our linear evaluation function suffered from the **"Peón Señuelo" (Decoy Pawn) dispersion syndrome**: purely additive linear evaluation ($\sum w_i f_i$) rewarded pushing White pawns outward towards the camp frentes (`campFrontPreserved`) and diamond positions (`diamondOccupancy`), while penalizing the King for remaining in the Castle. White defenders scattered to the wings in isolation, completely decoupling from the King. Luca's MCTS exploited this with 3x3 spatial receptive fields (convolutional filters) that recognized local encirclement cordons and maintained an unbreakable ring around the Throne, suffocating White.
+    - *Game 2 (Luca MCTS WHITE vs. Antigravity BLACK):* Black won in 44 plies. Antigravity punished White's overextended pawn on `h4` with an active custodian capture. Deprived of tactical options, Luca's score-bounded MCTS recognized an unavoidable defeat (`valore = -1.000, DIMOSTRATO sconfitta`) on move 20.
+  - *Core Comparative Insight:*
+    - **Throughput vs. Spatial Structure:** Antigravity evaluates ~5,000,000 NPS with a flat linear evaluation (~32 ns/eval). Luca's MCTS/CNN evaluates ~1,000–2,000 NPS (~2,000,000 ns/eval) but benefits from deep selective rollouts (depth 17–37 on critical lines) and 3x3 local convolution patterns (pinches, sandwich setups against camp barriers, and forks).
+    - **Architectural Synthesis (The Best of Both Worlds):** We do not need a 90x slower neural network to match these strengths. By translating spatial patterns (multi-piece pinches, defender shield cohesion, line-of-sight barrier anvils) into $O(1)$ compound bitboard/array heuristics, adding score-bounded analytic cutoffs, and extending singular forced moves, our high-throughput Minimax engine (~5M NPS) gains deep structural tactical vision without losing search depth.
+
+* **Exhaustive 7-Pillar Architecture & Enhancement Plan:**
+
+  1. **Pillar 1: Analytic Score-Bounded Escape & Mate Cutoffs (Root & Interior Pre-Filter):**
+     - *Theoretical Defect:* Standard Minimax expands subtrees even when a position contains an unavoidable 1-ply or 2-ply forced win or loss, relying on $\alpha$-$\beta$ search to resolve it at depth. In contrast, Luca's `escapeDetector` immediately assigns $-1.0$ (forced game-theoretic loss) or $+1.0$ (forced win), immediately cutting off search.
+     - *Implementation:*
+       - In `MoveGenerator.java` / `MoveOrderer.java`, implement `detectForcedTacticalMate(FastState state, int turn)`:
+         - **White Unblockable 2-Way Escape:** If the King is outside the throne, has $\ge 2$ unblocked orthogonal corridors to escape squares, and no Black piece can intercept both corridors simultaneously in 1 move, immediately return `WIN_SCORE - ply` as a terminal evaluation.
+         - **Black Unblockable Encirclement / Smother:** If the King has 0 legal moves, is surrounded on 3 sides, and Black can legally close the 4th side in 1 ply without White being able to capture the attacker, immediately return `-WIN_SCORE + ply`.
+       - *Impact:* Bypasses deep tree expansion on solved tactical positions, cutting search latency from seconds to $< 1$ ms and preventing horizon-effect blunders.
+
+  2. **Pillar 2: King-Defender Shield Cohesion & Dispersion Penalty (Solving the Decoy Pawn Syndrome):**
+     - *Theoretical Defect:* In Ashton Tablut, an isolated King surrounded by Black is doomed, regardless of how many White pawns survive on the board edges. A purely additive linear evaluator can value an edge pawn at $+125$ cp even when it is completely useless for King defense.
+     - *Implementation in `WhiteHeuristics.java`:*
+       - `kingDefenderShieldCohesion`: Evaluates the proximity and interlocking formation of White pawns around the King:
+         $$\text{ShieldScore} = \sum_{w \in \text{White}} \max(0, 3 - \text{ChebyshevDist}(w, \text{King}))$$
+         Provides a dense positive gradient when White soldiers maintain a tight protective escort within 1–2 squares of the King.
+       - `whitePawnDispersionPenalty`: Applies a non-linear quadratic penalty for White pawns that wander $> 3$ Manhattan steps from the King unless that specific move opens an immediate unblockable escape corridor:
+         $$\text{DispersionPenalty} = \sum_{w \in \text{White}, d(w, K) > 3} (d(w, K) - 3)^2$$
+       - Expose both parameters in `HeuristicWeights.java` for SPSA calibration.
+
+  3. **Pillar 3: Compound Non-Linear Spatial Interaction Features (Receptive Field Emulation):**
+     - *Theoretical Defect:* Convolutional layers in CNNs naturally capture multi-piece relationships (e.g. Piece A + Camp Wall + Piece B = Imminent Capture). Our linear model evaluates features in isolation.
+     - *Implementation in `WhiteHeuristics.java` and `BlackHeuristics.java`:*
+       - **Escort Corridor Reachability (Corridor Safety):** A King escape corridor along row $r$ or col $c$ is only given full weight if no Black piece can orthogonally slide to intercept or block the exit square in 1 ply. If interceptable, discount feature weight by $75\%$.
+       - **Active Camp-Wall Pinch Traps:** Detect when a Black soldier and a Camp wall form a 1-move capture threat against an adjacent White defender with an unobstructed approach ray.
+       - **Active Throne Anvil Threats:** Evaluate whether an empty Throne ($e5$) acts as a capture anvil against adjacent pieces with active attacker lines of sight.
+
+  4. **Pillar 4: Dynamic Time Management & Empirical Effective Branching Calibration:**
+     - *Theoretical Defect:* In 60s matches, the engine terminated search at depth 7–8 utilizing only ~25–35s because it assumed a conservative static branching factor $b = 4.0$ ($T_{d+1} \approx 30\text{s} \times 4.0 = 120\text{s} > 54\text{s}$). However, in late-game and well-ordered trees (PVS + TT), the true effective branching factor $b_{\text{eff}}$ drops to $2.2\text{--}3.0$. Over 25 seconds of valuable computation time were wasted.
+     - *Implementation in `SearchEngine.java` / `ParallelSearchEngine.java`:*
+       - Set `timeSafetyRatio = 0.94` in `TablutAgentClient.java`, raising the active thinking ceiling to $56.4$s in a 60s match.
+       - Dynamic Empirical Branching: Replace fixed `DEFAULT_BRANCHING_FACTOR = 4.0` with dynamic tracking:
+         $$b_{\text{eff}} = \text{clamp}\left(2.2, 4.5, \frac{T_d}{T_{d-1}}\right)$$
+       - Phase-Dependent Clock Allocation:
+         - *Opening (Plies 1–6):* Consumes small budget ($\le 5\text{s}$), relying on $D_4$ opening book and low-depth stability.
+         - *Critical Midgame (Plies 7–25):* When King leaves Throne or material is imbalanced, allocate up to $1.25 \times$ the average time slice.
+         - *Simplified Endgame:* Allocate smaller slices when the game state is tactically clear.
+
+  5. **Pillar 5: Singular Tactical Extensions in Principal Variation Search (PVS):**
+     - *Theoretical Defect:* MCTS naturally searches very deep (15–30 plies) along forced tactical lines because visits accumulate on the best path. Standard Minimax suffers from the uniform horizon effect, failing to see combinations that resolve 1 ply beyond depth $D$.
+     - *Implementation:*
+       - In `pvs()`: If the search encounters a position where only 1 legal move prevents King escape or King capture, or if the TT best move's score dominates the second-best move by $\Delta \ge 250$ cp, extend search depth by $+1$ ply ($d \gets d + 1$).
+       - Caps maximum cumulative extensions at $+3$ plies to prevent search tree explosion.
+       - Guarantees that forced King escape or capture sequences are calculated to depths 12–15 without increasing branching across quiescent subtrees.
+
+  6. **Pillar 6: Feature Orthogonality, Covariance & SVD/PCA Audit (`scripts/analyze_feature_covariance.py`):**
+     - *Theoretical Defect:* Luca proved via matrix rank analysis that 3 out of 41 geometric features were linearly dependent ($38 < 41$). In our 17 SPSA weights, co-linear parameters (e.g. `rhombusBlockade` vs `blackConnectedChains` vs `campFrontPreserved`) can induce gradient cancellation, causing SPSA to oscillate without improving playing strength.
+     - *Implementation:*
+       - Develop `scripts/analyze_feature_covariance.py`:
+         - Ingests 20,000 board states generated from high-depth headless self-play.
+         - Evaluates raw feature vectors $\mathbf{f}(s) \in \mathbb{R}^{17}$.
+         - Computes Pearson correlation matrix $\mathbf{R}$, condition number $\kappa(\mathbf{X})$, and Singular Value Decomposition (SVD).
+         - Identifies redundant feature pairs ($r > 0.85$) to merge, decouple, or regularize.
+
+  7. **Pillar 7: Multi-Engine Regression Gauntlet & Validation Suite:**
+     - Implement `Phase12OptimizationsTest.java`:
+       - *Test 1:* Analytic mate cutoffs (validates $0$-node instant terminal score on 1-ply/2-ply escape and mate).
+       - *Test 2:* King shield cohesion score (validates penalty on dispersed White pawns and bonus on compact escorts).
+       - *Test 3:* Dynamic time budget utilization (validates search launches depth $d+1$ when $b_{\text{eff}} < 3.0$).
+       - *Test 4:* Dynamic time budget utilization & branching calibration (validates $b_{\text{eff}} = \text{clamp}(2.2, 4.5, T_d / T_{d-1})$).
+       - *Test 5:* Singular extension trigger (validates $+1$ extension on forced escape defenses).
+
+* **Delivered Components & Empirical Verification:**
+  - `src/tablut/engine/TacticalCutoffs.java`: $O(1)$ analytic score-bounded mate cutoffs for root and interior tree nodes.
+  - `src/tablut/engine/HeuristicWeights.java`: Expanded to 21 parameters, adding `kingDefenderShieldCohesion` (24), `whitePawnDispersionPenalty` (14), `campPinchTraps` (35), and `throneAnvilThreats` (28), preserving full backward compatibility.
+  - `src/tablut/engine/WhiteHeuristics.java` & `BlackHeuristics.java`: Implemented shield cohesion, quadratic dispersion penalty, 75% corridor reachability discount, pinch traps, and empty Throne capture anvils.
+  - `src/tablut/engine/SearchEngine.java` & `ParallelSearchEngine.java`: Dynamic effective branching factor calibration ($b_{\text{eff}} \in [2.2, 4.5]$), singular tactical extensions (max $+3$ plies), root move ordering with instant mate cutoffs.
+  - `src/tablut/engine/FeatureMatrixGenerator.java` & `scripts/analyze_feature_covariance.py`: Automated 21-feature extractor and Pearson correlation / SVD condition number audit tool.
+  - `src/tablut/engine/Phase12OptimizationsTest.java`: Comprehensive 5-test validation suite passing 100% with zero regressions across all 13 project test suites.
+     - Tournament verification: Run full gauntlet via `scripts/tournament_vs_opponents.ps1` against `team/luca` (both MCTS and Negamax modes), `competitors/brainmates`, and `competitors/thor`.
+
+---
+
+### Phase 13: Tactical Refinements, Opening Book Sanitation & 2-Slot TT Scaling [COMPLETED]
+* **Educational & Research Objective:** Eliminate tactical vulnerabilities exposed during the 15s inter-version match, sanitize opening book theory to prevent premature King throne evacuation, and incorporate proven high-leverage architectural patterns identified in Luca's engine audit (proactive 2-step escape forks, root anti-hanging tie-breaker, and 2-slot bucket TT scaling).
+
+* **Post-Mortem: 15s Inter-Version Match Analysis (`scripts/match_versions.ps1`):**
+  - **Match Results (15s/move, Official `Server.jar`):** **1 - 1** (Both games won by Black in 24 plies).
+    - *Game 1 (Current WHITE vs Previous BLACK):* Black won on ply 24.
+    - *Game 2 (Previous WHITE vs Current BLACK):* Current Black won on ply 24. In Game 2, Current Black detected a forced mate combination (`Score: 99991`) at turn 20 in 1.9s, executing subsequent winning plies in 0–42 ms.
+  - **Diagnostic 1: The "Opening Book Suicide Trap" (`OpeningBook.java`):**
+    - Both matches opened with Line 1 of `OpeningBook.java` (weight 120): `e3d3`, `e2c2`, `e4f4`, `e8g8`, `e5e4`, `b5b7`.
+    - Move 3 (`e5 -> e4`) voluntarily moved the White King out of the Castle onto `e4`.
+    - *Fatal Tactical Consequence:* Inside `e5`, the King requires 4 Black attackers to be captured. Once outside, it requires only 2. Furthermore, by leaving `e5` empty, the Throne immediately transformed into a permanent hostile capture anvil for Black (`throneAnvilThreats`), severing White's central defense and allowing Black to easily pin the King against the southern camp walls.
+  - **Diagnostic 2: King Wanderlust vs. Swarm Gradient:**
+    - Black's search executes a relentless Manhattan swarm gradient (`computeOpenFieldContainment`), collapsing the perimeter onto the King.
+    - White's heuristics evaluated escape corridors only if they existed on the King's current square. The King wandered seeking open space rather than coordinating a structured 2-step breakout with friendly escorts.
+
+* **Audit of Peer Architecture (Luca's Engine) & Confirmation of Minimax on CPU:**
+  - *Luca MCTS/CNN Limits:* In-depth analysis of `team/luca` confirmed that CNN evaluation requires ~11 µs per inference (limiting throughput to ~90k NPS on 4 vCPUs without GPU) and MCTS allocates ~1,700 bytes/node, inducing garbage collector pauses under strict VM limits.
+  - *Minimax Superiority on CPU:* Our zero-allocation Minimax/PVS engine (>25,000,000 NPS, ~32 ns/eval) searches 4–6 plies deeper than neural rollouts.
+  - *Targeted Innovations to Ingest:* Rather than adopting slow neural nets, we can extract 4 specific tactical techniques from Luca's design to integrate into our high-speed search pipeline.
+
+* **5 Concrete Implementation Pillars:**
+
+  1. **Pillar 1: Opening Book Sanitation & Throne Retention Strategy (`OpeningBook.java`):**
+     - Completely sanitized Line 1: Deprecated `e5 -> e4`. White keeps the King anchored on the Throne (`e5`) while defenders clear peripheral escape corridors.
+     - Replaced suicidal lines across all 24 canonical opening variations with defensive clearing moves (`d5 -> d6`, `f5 -> f6`, `e4 -> c4`) that preserve King-Defender cohesion.
+     - Enforced $D_4$ symmetry sanity tests with an invariant check in `addLine` throwing `IllegalArgumentException` on any Throne exit, guaranteeing that no transformed line produces voluntary Throne evacuations.
+
+  2. **Pillar 2: Proactive 2-Step King Escape Forks (`SAFE_FORKS` in `WhiteHeuristics.java`):**
+     - Extended beyond static 1-step escape detection to evaluate squares $S$ reachable by the King in 1 legal move such that $S$ simultaneously creates $\ge 2$ unblocked escape corridors to the perimeter without being capturable in 1 reply ply by Black (`isSafeForkSquare`).
+     - Added `kingSafeForkThreat` (calibrated to 2800) in `HeuristicWeights.java`, expanding the vector to 22 parameters while preserving backward compatibility.
+
+  3. **Pillar 3: Root Anti-Hanging Move Tie-Breaker (`SearchEngine.java` / `ParallelSearchEngine.java`):**
+     - Introduced `leavesFriendlyPieceHanging(rootState, move)` testing 1-ply tactical exposure to opponent custodian captures.
+     - When selecting `bestMoveThisDepth` within a score tolerance window ($\Delta \le 30$ cp of `bestScoreThisDepth`), discards moves that leave friendly pieces en prise in favor of the safest non-hanging tactical alternative.
+
+  4. **Pillar 4: 2-Slot Bucket Transposition Table & $2^{23}$ Entry Scaling (`TranspositionTable.java`):**
+     - Replaced single-entry direct mapping with a 2-slot bucket per hash index:
+       - **Slot 0 (Depth-Preferred):** Preserves high-depth strategic evaluations from deep iterations.
+       - **Slot 1 (Always-Replace):** Captures recent tactical transpositions, preventing local search thrashing.
+     - Scaled default table capacity from $2^{21}$ entries (38 MB) to $2^{23}$ entries ($8,388,608$ entries $\times 16$ bytes = 134 MB), maximizing TT hit rates under Hyatt lockless XOR verification.
+
+  5. **Pillar 5: Comprehensive Regression Suite (`Phase13RefinementsTest.java`):**
+     - Created dedicated 5-test validation suite verifying:
+       - Test 1: OpeningBook Throne retention and $D_4$ invariance.
+       - Test 2: `SAFE_FORKS` 2-step escape trajectory detection and tactical trap filtering.
+       - Test 3: Root anti-hanging filter discarding exposed candidate moves.
+       - Test 4: 2-slot bucket replacement priorities, dual retention under collision, and $2^{23}$ scaling.
+       - Test 5: Full engine search integrity.
+     - 100% pass across all 14 project unit test suites with zero regressions.
+
+* **Delivered Components & Verification:**
+  - `src/tablut/engine/OpeningBook.java`: Complete Throne retention sanitation across all 24 canonical opening variations.
+  - `src/tablut/engine/HeuristicWeights.java`: Expanded to 22 parameters with `kingSafeForkThreat = 2800`.
+  - `src/tablut/engine/WhiteHeuristics.java`: Implemented `computeKingSafeForks`, `isSafeForkSquare`, and `countCorridorsFromSquare`.
+  - `src/tablut/engine/SearchEngine.java` & `ParallelSearchEngine.java`: Implemented root anti-hanging move tie-breaker and exposed piece detection.
+  - `src/tablut/engine/TranspositionTable.java`: Scaled to $2^{23}$ entries (134 MB) with 2-slot bucket architecture (depth-preferred Slot 0, always-replace Slot 1).
+  - `src/tablut/engine/FeatureMatrixGenerator.java`: Updated to export all 22 features in covariance matrices.
+  - `src/tablut/engine/Phase13RefinementsTest.java`: Complete 5-test validation passing 100%.
+
+---
+
 ## 9. Verified External References & Reference Codebases
 
-The project ingests insights, opening structures, and heuristic weights from five primary external sources:
+The project ingests insights, opening structures, and heuristic weights from five primary external sources (now executable locally for validation):
 
 | Source | Type / Author | Key Concepts Ingested | Target Phase |
 | :--- | :--- | :--- | :--- |
 | **`docs/references/An_Upper_Bound_on_the_Complexity_of_Tablut.pdf`** | Academic Paper<br>*(Andrea Galassi, UNIBO 2021)* | • State-space complexity upper bound ($1.4 \times 10^{27}$).<br>• Formal $D_4$ dihedral group symmetry (4 axes, 8 transforms).<br>• Subspace analysis: Escape endpoints ($2.3 \times 10^{26}$) vs King captures ($4.6 \times 10^{26}$). | **Phase 1, 3** *(Applied)* |
-| **`gmurro/tablut`**<br>*(brAInmates)* | Champion Codebase<br>*(1st Place UNIBO 2020)* | • White diamond formation $\{d3, f4, d6, f7\}$.<br>• Black 8-tile Rhombus blockade $\{c2, g2, b3, h3, b7, h7, c8, g8\}$.<br>• Normalized feature weights (White: 35/20/18/18/7/2, Black: 48/35/15/2). | **Phase 3** *(Book)*<br>**Phase 4** *(Heuristics)* |
-| **`carlo98/tablut-THOR`**<br>*(THoR)* | Podium Codebase<br>*(3rd Place UNIBO 2020)* | • "Keep the fronts" camp doorway discipline.<br>• "Aggressive King" escape corridor pressure.<br>• Genetic algorithm search framework (`genetic_search.py`). | **Phase 4** *(Heuristics)*<br>**Phase 5** *(Tuning)* |
-| **Hnefatafl Strategy Forum**<br>*(Aage Nielsen & Casshern)* | Strategic Theory<br>*(Tafl Players Community)* | • Foundational opening move for Black: $e2 \to c2$.<br>• Sequential file closure: $e2\text{-}c2 \to b5\text{-}b7 \to e8\text{-}g8 \to h5\text{-}h3$.<br>• White counter-play: lateral evacuation ($d3, f4, c4$). | **Phase 3** *(Book)*<br>**Phase 4** *(Heuristics)* |
-| **`Luca Peratella (team/luca)`**<br>*(MLP Architecture & Search Optimizations)* | Teammate Codebase & Report<br>*(UNIBO 2026/2027)* | • Graph History Interaction (GHI) subtree repetition tracking.<br>• In-place lazy move selection (`selectBest`).<br>• Lock-free shared TT with Robert Hyatt's XOR verification.<br>• Citadel barrier escape correction (20 true exits vs 32 border squares). | **Phase 6** *(Search & Heuristics)* |
+| **`competitors/brainmates`**<br>*(gmurro/tablut)* | Champion Codebase<br>*(1st Place UNIBO 2020)* | • White diamond formation $\{d3, f4, d6, f7\}$.<br>• Black 8-tile Rhombus blockade $\{c2, g2, b3, h3, b7, h7, c8, g8\}$.<br>• Normalized feature weights (White: 35/20/18/18/7/2, Black: 48/35/15/2).<br>• Executable benchmark in `competitors/brainmates/`. | **Phase 3, 4, 11** *(Book & Benchmark)* |
+| **`competitors/thor`**<br>*(carlo98/tablut-THOR)* | Podium Codebase<br>*(3rd Place UNIBO 2020)* | • "Keep the fronts" camp doorway discipline.<br>• "Aggressive King" escape corridor pressure.<br>• Genetic algorithm search framework (`genetic_search.py`).<br>• Executable benchmark in `competitors/thor/`. | **Phase 4, 5, 11** *(Heuristics & Benchmark)* |
+| **Hnefatafl Strategy Forum**<br>*(Aage Nielsen & Casshern)* | Strategic Theory<br>*(Tafl Players Community)* | • Foundational opening move for Black: $e2 \to c2$.<br>• Sequential file closure: $e2\text{-}c2 \to b5\text{-}b7 \to e8\text{-}g8 \to h5\text{-}h3$.<br>• White counter-play: lateral evacuation ($d3, f4, c4$). | **Phase 3, 4** *(Book & Heuristics)* |
+| **`Luca Peratella (team/luca)`**<br>*(MLP Architecture & Search Optimizations)* | Teammate Codebase & Report<br>*(UNIBO 2026/2027)* | • Graph History Interaction (GHI) subtree repetition tracking.<br>• In-place lazy move selection (`selectBest`).<br>• Lock-free shared TT with Robert Hyatt's XOR verification.<br>• Citadel barrier escape correction (20 true exits vs 32 border squares).<br>• Score-bounded terminal escapes and MCTS/CNN spatial receptive fields.<br>• Executable benchmark in `team/luca/`. | **Phase 6, 9, 11, 12** *(Search & Heuristics)* |

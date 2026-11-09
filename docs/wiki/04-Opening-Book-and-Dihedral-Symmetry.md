@@ -125,6 +125,21 @@ The opening book incorporates specific empirical counter-lines against common st
 * **Countering `f1 -> f3`:** If Black attempts an early flank attack with `f1 -> f3`, the book responds with `d5 -> d6`, threatening the North-West axis where Black's defensive structure is thinned.
 * **Countering `e6 -> f6`:** If White plays an early flank move `e6 -> f6`, Black responds with `e8 -> g8`, anchoring the North-East quadrant and securing the Rhombus barrier.
 
+### 2.4 Phase 13 Sanitization & The Throne Retention Invariant
+During inter-version benchmark matches at 15s/move, an empirical vulnerability was uncovered: Line 1 of the opening book opened with `e3d3`, `e2c2`, `e4f4`, `e8g8`, followed on Move 3 by `e5 -> e4`.
+* **The Vulnerability:** Vacating `e5` moved the King voluntarily out of the Castle onto `e4`. Under Ashton rules:
+  1. On `e5`, the King requires 4 Black soldiers to be captured. Outside `e5`, it requires only 2.
+  2. The vacated Throne immediately converted into a permanent hostile capture anvil (`throneAnvilThreats`), severing White's defense and allowing Black to pin the King against the southern camps.
+* **The Fix:**
+  - Deprecated `e5 -> e4` across all 24 canonical variations. White keeps the King anchored on the Throne while defenders clear peripheral corridors (`d5 -> d6`, `f5 -> f6`, `e4 -> c4`).
+  - Added a strict runtime assertion in `OpeningBook.addLine`:
+    ```java
+    if (fromSq == BoardConstants.THRONE || toSq == BoardConstants.THRONE) {
+        throw new IllegalArgumentException("Opening book cannot include moves from/to the Throne (e5)");
+    }
+    ```
+  - This invariant guarantees that no dihedral transformation produces premature Throne evacuations.
+
 ---
 
 ## 3. Lookup Performance & Operational Modes
@@ -151,3 +166,17 @@ Total lookup latency is **$< 0.01 \text{ ms}$** (typically sub-microsecond on mo
   Used during official tournament matches. Always selects the move with the highest empirical win-rate weight for the canonical state.
 * **Weighted Stochastic Sampling (`greedy = false`):**
   Used during automated SPSA parameter tuning. Candidate book moves are sampled probabilistically based on their relative weights, introducing game tree variety into training self-play matches.
+
+---
+
+## 4. Automated Opening Mining Pipeline (`scripts/mine_openings.py`)
+
+To systematically discover and expand high-leverage opening variations against competitive opponents (such as BrAInmates, THoR, and Luca), the engine incorporates an automated opening log miner:
+
+```bash
+python scripts/mine_openings.py --logs-dir logs --max-plies 6 --min-winrate 0.70
+```
+
+1. **Log Ingestion:** Parses server match transcripts, reconstructing the sequence of moves and final game outcomes.
+2. **Frequency & Win-Rate Aggregation:** Groups opening trajectories by canonical $D_4$ hash up to ply 6, computing empirical win/loss ratios for each branch.
+3. **Java Code Generation:** Automatically synthesizes sanitized `addLine(...)` statements for high-winrate branches ($> 70\%$), ready for insertion into `OpeningBook.java` with automatic validation against the Throne retention invariant.

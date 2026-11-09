@@ -19,6 +19,24 @@ public final class HeuristicEvaluation {
     public static final int WIN_SCORE = 100_000;
     public static final int DRAW_SCORE = 0;
 
+    /**
+     * Evaluates a draw relative to state.turn using a dynamic material-aware contempt factor.
+     * Material advantage creates contempt: White with a material edge dislikes draws (negative score),
+     * while White with a material deficit welcomes draws (positive score).
+     */
+    public static int evaluateDraw(FastState state) {
+        // Ashton nominal pawn ratio: 1 White pawn = 2 Black pawns (8 White vs 16 Black)
+        int materialBalance = (state.whiteCount * 2) - state.blackCount;
+        int whiteContempt = materialBalance * 50;
+        if (whiteContempt > 300) whiteContempt = 300;
+        if (whiteContempt < -300) whiteContempt = -300;
+
+        // In Negamax convention:
+        // From White's perspective: draw is worth -whiteContempt
+        // From Black's perspective: draw is worth +whiteContempt
+        return (state.turn == BoardConstants.WHITE_TURN) ? -whiteContempt : whiteContempt;
+    }
+
     private static final HeuristicWeights DEFAULT_WEIGHTS = new HeuristicWeights();
 
     /**

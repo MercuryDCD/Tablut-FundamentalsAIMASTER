@@ -274,7 +274,7 @@ public final class MoveOrderer {
     /**
      * Checks if moving a Black piece to 'to' participates in capturing the King.
      */
-    private static boolean isBlackKingCaptureThreat(FastState state, int to) {
+    public static boolean isBlackKingCaptureThreat(FastState state, int to) {
         int kingSq = state.kingSquare;
         // The move must land directly adjacent to the King
         int distR = Math.abs(BoardConstants.row(to) - BoardConstants.row(kingSq));

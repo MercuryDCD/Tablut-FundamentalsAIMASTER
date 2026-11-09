@@ -40,6 +40,9 @@ def main():
     parser = argparse.ArgumentParser(description="Automated 2-Phase Overnight SPSA Training Pipeline")
     parser.add_argument("--warmup-iters", type=int, default=300,
                         help="Iterations for Phase 1 warm-up (default: 300, ~15 mins)")
+    parser.add_argument("--warmup-stage", type=str, default="positional",
+                        choices=["material", "positional", "micro", "tactical_compound", "all"],
+                        help="Stage to optimize during Phase 1 warm-up (default: positional)")
     parser.add_argument("--skip-warmup", action="store_true",
                         help="Skip Phase 1 and jump straight to Phase 2 (all parameters at depth 4)")
     parser.add_argument("--depth", type=int, default=4,
@@ -59,8 +62,8 @@ def main():
     print("=" * 80)
     print(f"  Worker Threads    : {args.threads}")
     print(f"  Checkpoint File   : {CHECKPOINT_FILE}")
-    print(f"  Phase 1 (Warmup)  : {'SKIPPED' if args.skip_warmup else f'{args.warmup_iters} iters @ Depth 3 (positional stage)'}")
-    print(f"  Phase 2 (Global)  : Infinite Anytime @ Depth {args.depth} ({args.games_phase2} games/step, all 17 params)")
+    print(f"  Phase 1 (Warmup)  : {'SKIPPED' if args.skip_warmup else f'{args.warmup_iters} iters @ Depth 3 ({args.warmup_stage} stage)'}")
+    print(f"  Phase 2 (Global)  : Infinite Anytime @ Depth {args.depth} ({args.games_phase2} games/step, all 24 params)")
     print(f"  Auto-Apply Final  : {'Enabled' if args.auto_apply else 'Disabled'}")
     print("=" * 80)
 
@@ -69,7 +72,7 @@ def main():
         sys.executable, str(SPSA_SCRIPT),
         "--resume",
         "--warm-restart",
-        "--stage", "positional",
+        "--stage", args.warmup_stage,
         "--depth", "3",
         "--games", "60",
         "--threads", str(args.threads),
@@ -104,9 +107,13 @@ def main():
         nonlocal interrupted, active_proc
         interrupted = True
         print("\n[!] Ctrl+C detected by overnight manager.")
-        if active_proc:
-            print("[*] Forwarding termination signal to SPSA subprocess...")
-            active_proc.send_signal(signal.SIGINT)
+        # On Windows, Ctrl+C is automatically broadcast to all console processes.
+        # Calling send_signal(signal.SIGINT) on Windows raises ValueError: Unsupported signal: 2.
+        if active_proc and sys.platform != "win32":
+            try:
+                active_proc.send_signal(signal.SIGINT)
+            except Exception:
+                pass
 
     signal.signal(signal.SIGINT, handle_sigint)
 
@@ -114,7 +121,7 @@ def main():
     if not args.skip_warmup:
         print("\n" + "#" * 80)
         print("  STARTING PHASE 1: WARM-UP & ACCLIMATIZATION OF NEW WEIGHTS")
-        print(f"  Stage: positional | Depth: 3 | Iters: {args.warmup_iters} | N: 60")
+        print(f"  Stage: {args.warmup_stage} | Depth: 3 | Iters: {args.warmup_iters} | N: 60")
         print("#" * 80 + "\n")
         start_t1 = time.time()
         active_proc = subprocess.Popen(cmd_phase1)
@@ -123,6 +130,10 @@ def main():
 
         if interrupted:
             print("[!] Phase 1 interrupted by user. Stopping pipeline.")
+            if args.auto_apply:
+                signal.signal(signal.SIGINT, signal.SIG_IGN)
+                print("\n[*] Ingesting best weights into HeuristicWeights.java and recompiling...")
+                subprocess.run([sys.executable, str(APPLY_SCRIPT)])
             return
 
         elapsed_p1 = int(time.time() - start_t1)
@@ -132,7 +143,7 @@ def main():
 
     # --- PHASE 2 EXECUTION ---
     print("\n" + "#" * 80)
-    print("  STARTING PHASE 2: GLOBAL COVARIANCE FINE-TUNING (ALL 17 WEIGHTS)")
+    print("  STARTING PHASE 2: GLOBAL COVARIANCE FINE-TUNING (ALL 24 WEIGHTS)")
     print(f"  Stage: all | Depth: {args.depth} | N: {args.games_phase2} | Continuous Anytime")
     print("  Will run indefinitely overnight. Press Ctrl+C in the morning to finish.")
     print("#" * 80 + "\n")
@@ -149,6 +160,7 @@ def main():
     print("=" * 80)
 
     if args.auto_apply:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         print("\n[*] Ingesting best weights into HeuristicWeights.java and recompiling...")
         subprocess.run([sys.executable, str(APPLY_SCRIPT)])
 

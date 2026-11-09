@@ -82,8 +82,9 @@ public final class HeadlessTournament {
     }
 
     private static final class EngineContext {
-        final SearchEngine whiteEngine = new SearchEngine();
-        final SearchEngine blackEngine = new SearchEngine();
+        // Cache-friendly 1 MB TT (2^16 entries = 65,536 slots) per engine in RAM simulation
+        final SearchEngine whiteEngine = new SearchEngine(16);
+        final SearchEngine blackEngine = new SearchEngine(16);
         final FastState state = new FastState();
         final UndoInfo undo = new UndoInfo();
         final int[] moves = new int[MoveGenerator.MAX_MOVES];
@@ -115,12 +116,12 @@ public final class HeadlessTournament {
         SearchEngine whiteEngine = ctx.whiteEngine;
         whiteEngine.setHeuristicWeights(whiteWeights);
         whiteEngine.setUseOpeningBook(true);
-        whiteEngine.getTranspositionTable().clear();
+        whiteEngine.getTranspositionTable().newSearch();
 
         SearchEngine blackEngine = ctx.blackEngine;
         blackEngine.setHeuristicWeights(blackWeights);
         blackEngine.setUseOpeningBook(true);
-        blackEngine.getTranspositionTable().clear();
+        blackEngine.getTranspositionTable().newSearch();
 
         // Preallocated move stack and repetition history
         int[] moves = ctx.moves;

@@ -93,7 +93,13 @@ public final class QuiescenceSearch {
                 int score = BaselineEvaluation.WIN_SCORE - searchPly;
                 return (state.turn == BoardConstants.BLACK_TURN) ? score : -score;
             }
-            return BaselineEvaluation.DRAW_SCORE;
+            return useHeuristicEvaluation ? HeuristicEvaluation.evaluateDraw(state) : BaselineEvaluation.DRAW_SCORE;
+        }
+
+        // Analytic Score-Bounded Escape & Mate Cutoff (Phase 12 Pillar 1)
+        int forcedMate = TacticalCutoffs.detectForcedTacticalMate(state, searchPly);
+        if (forcedMate != TacticalCutoffs.NO_FORCED_MATE) {
+            return forcedMate;
         }
 
         // 1. Stand-Pat Evaluation: evaluate static position
@@ -136,9 +142,36 @@ public final class QuiescenceSearch {
             byte piece = state.board[from];
 
             boolean isKingEscape = (piece == BoardConstants.KING && BoardConstants.IS_WIN_SQUARE_FOR_KING[to]);
+            boolean isKingEvasion = (piece == BoardConstants.KING && state.turn == BoardConstants.WHITE_TURN && isKingThreatened(state));
             int capScore = MoveOrderer.evaluateCaptures(state, piece, to);
 
-            if (isKingEscape || capScore > 0) {
+            // Phase 14 / P3 Tactical Extension:
+            // Detect King moves towards escape squares or quiet forks at distance <= 2 (for qsPly <= 2)
+            // to prevent horizon blindness against quiet escort maneuvers.
+            boolean isKingAdvanceOrFork = false;
+            if (qsPly <= 2) {
+                if (piece == BoardConstants.KING) {
+                    if (BoardConstants.MIN_DISTANCE_TO_ESCAPE[to] <= 2) {
+                        isKingAdvanceOrFork = true;
+                    }
+                } else if (state.turn == BoardConstants.WHITE_TURN && BoardConstants.MIN_DISTANCE_TO_ESCAPE[state.kingSquare] <= 2) {
+                    // White defender unblocking on King's orthogonal axis
+                    int kRow = BoardConstants.row(state.kingSquare);
+                    int kCol = BoardConstants.col(state.kingSquare);
+                    if (BoardConstants.row(from) == kRow || BoardConstants.col(from) == kCol) {
+                        isKingAdvanceOrFork = true;
+                    }
+                } else if (state.turn == BoardConstants.BLACK_TURN && BoardConstants.MIN_DISTANCE_TO_ESCAPE[state.kingSquare] <= 2) {
+                    // Black soldier blocking on King's orthogonal axis
+                    int kRow = BoardConstants.row(state.kingSquare);
+                    int kCol = BoardConstants.col(state.kingSquare);
+                    if (BoardConstants.row(to) == kRow || BoardConstants.col(to) == kCol) {
+                        isKingAdvanceOrFork = true;
+                    }
+                }
+            }
+
+            if (isKingEscape || isKingEvasion || capScore > 0 || isKingAdvanceOrFork) {
                 allMoves[numTacticalMoves++] = move;
             }
         }
@@ -186,7 +219,7 @@ public final class QuiescenceSearch {
         return alpha;
     }
 
-    private static boolean isKingThreatened(FastState state) {
+    public static boolean isKingThreatened(FastState state) {
         int kSq = state.kingSquare;
         if (kSq == BoardConstants.THRONE) {
             int b = 0;

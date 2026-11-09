@@ -42,15 +42,19 @@ public final class TranspositionTable {
     public static final int NO_MOVE = Move.NULL_MOVE;
     public static final int NO_SCORE = -BaselineEvaluation.INFINITY;
 
-    // Default table capacity: 2^21 entries = 2,097,152 slots (~38 MB RAM)
-    public static final int DEFAULT_SIZE_BITS = 21;
+    // Default table capacity: 2^23 entries = 8,388,608 slots (~134 MB RAM) (Phase 13 Pillar 4)
+    public static final int DEFAULT_SIZE_BITS = 23;
 
     private final int size;
-    private final int mask;
+    private final int numBuckets;
+    private final int bucketMask;
 
     // Two parallel 64-bit primitive flat arrays (Hyatt Lockless XOR layout):
     // tableData[i]:  64-bit packed entry (score:24, move:16, depth:8, flag:8, age:8)
     // tableLocks[i]: zobristHash ^ tableData[i] (lockless verification preventing torn reads)
+    // Each bucket contains 2 slots:
+    // Slot 0 (even index): Depth-preferred slot
+    // Slot 1 (odd index):  Always-replace fallback slot
     private final long[] tableLocks;
     private final long[] tableData;
 
@@ -70,7 +74,8 @@ public final class TranspositionTable {
             throw new IllegalArgumentException("Size bits must be between 10 and 28");
         }
         this.size = 1 << sizeBits;
-        this.mask = this.size - 1;
+        this.numBuckets = this.size >>> 1;
+        this.bucketMask = this.numBuckets - 1;
 
         this.tableLocks = new long[this.size];
         this.tableData = new long[this.size];
@@ -97,7 +102,8 @@ public final class TranspositionTable {
 
     /**
      * Probes the table for a recorded entry matching the given Zobrist hash.
-     * Uses Bob Hyatt's Lockless XOR Hash Verification:
+     * Uses 2-slot bucket probing (Slot 0 Depth-Preferred, Slot 1 Always-Replace)
+     * with Bob Hyatt's Lockless XOR Hash Verification:
      * Any torn read between concurrent worker threads corrupts (lock ^ data)
      * and cleanly degrades to a safe cache miss with zero locking overhead.
      * 
@@ -105,13 +111,26 @@ public final class TranspositionTable {
      * @return index in arrays if key matches, or -1 if miss/collision
      */
     public int probe(long zobristHash) {
-        int index = (int) (zobristHash & mask);
-        long data = tableData[index];
-        long lock = tableLocks[index];
-        if ((lock ^ data) == zobristHash && unpackFlag(data) != FLAG_NONE) {
+        int bucket = (int) (zobristHash & bucketMask);
+        int slot0 = bucket << 1;
+
+        // 1. Probe Slot 0 (Depth-Preferred)
+        long data0 = tableData[slot0];
+        long lock0 = tableLocks[slot0];
+        if ((lock0 ^ data0) == zobristHash && unpackFlag(data0) != FLAG_NONE) {
             hits.increment();
-            return index;
+            return slot0;
         }
+
+        // 2. Probe Slot 1 (Always-Replace fallback)
+        int slot1 = slot0 | 1;
+        long data1 = tableData[slot1];
+        long lock1 = tableLocks[slot1];
+        if ((lock1 ^ data1) == zobristHash && unpackFlag(data1) != FLAG_NONE) {
+            hits.increment();
+            return slot1;
+        }
+
         misses.increment();
         return -1;
     }
@@ -119,11 +138,9 @@ public final class TranspositionTable {
     /**
      * Stores or updates an evaluation in the transposition table.
      * 
-     * Replacement Policy:
-     * 1. If slot is empty, store immediately.
-     * 2. If same position, overwrite if new depth >= old depth or age differs.
-     * 3. If collision with different position: replace if old entry is from a previous search
-     *    age (stale) or if new search depth >= old search depth (depth-preferred).
+     * 2-Slot Bucket Replacement Policy (Phase 13 Pillar 4):
+     * - Slot 0 (Depth-Preferred): Preserves high-depth strategic evaluations from deep iterations.
+     * - Slot 1 (Always-Replace): Captures recent tactical transpositions, preventing local thrashing.
      *
      * Bob Hyatt's Lockless XOR Concurrency:
      * The payload is packed into a single 64-bit primitive long, and the lock key is
@@ -131,34 +148,90 @@ public final class TranspositionTable {
      * Any reader observing an inconsistent/intermediate write will fail the XOR test and miss safely.
      */
     public void record(long zobristHash, int depth, int score, byte flag, int bestMove, int ply) {
-        int index = (int) (zobristHash & mask);
+        int bucket = (int) (zobristHash & bucketMask);
+        int slot0 = bucket << 1;
+        int slot1 = slot0 | 1;
 
-        long oldData = tableData[index];
-        long oldLock = tableLocks[index];
-        boolean isOldSameKey = ((oldLock ^ oldData) == zobristHash && unpackFlag(oldData) != FLAG_NONE);
+        long data0 = tableData[slot0];
+        long lock0 = tableLocks[slot0];
+        boolean hit0 = ((lock0 ^ data0) == zobristHash && unpackFlag(data0) != FLAG_NONE);
 
-        byte oldAge = unpackAge(oldData);
-        int oldDepth = unpackDepth(oldData);
+        long data1 = tableData[slot1];
+        long lock1 = tableLocks[slot1];
+        boolean hit1 = ((lock1 ^ data1) == zobristHash && unpackFlag(data1) != FLAG_NONE);
 
-        boolean isStale = (oldAge != currentAge);
-        boolean isDeeperOrEqual = (depth >= oldDepth);
+        int ttScore = scoreToTt(score, ply);
 
-        boolean shouldReplace = (unpackFlag(oldData) == FLAG_NONE)
-                || (isOldSameKey && (isDeeperOrEqual || isStale))
-                || (!isOldSameKey && (isStale || isDeeperOrEqual));
+        // Case 1: Key matches Slot 0 (Depth-Preferred slot)
+        if (hit0) {
+            int oldDepth0 = unpackDepth(data0);
+            byte oldAge0 = unpackAge(data0);
+            boolean isStale0 = (oldAge0 != currentAge);
+            boolean isDeeperOrEqual0 = (depth >= oldDepth0);
 
-        if (shouldReplace) {
-            int move = bestMove;
-            if (move == NO_MOVE && isOldSameKey) {
-                move = unpackMove(oldData);
+            if (isDeeperOrEqual0 || isStale0) {
+                int move = bestMove;
+                if (move == NO_MOVE) {
+                    move = unpackMove(data0);
+                }
+                long newData = packData(ttScore, move, depth, flag, currentAge);
+                tableData[slot0] = newData;
+                tableLocks[slot0] = zobristHash ^ newData;
             }
+            return;
+        }
 
-            int ttScore = scoreToTt(score, ply);
-            long newData = packData(ttScore, move, depth, flag, currentAge);
-            long newLock = zobristHash ^ newData;
+        // Case 2: Key matches Slot 1 (Always-Replace slot)
+        if (hit1) {
+            int oldDepth0 = unpackDepth(data0);
+            byte oldAge0 = unpackAge(data0);
+            boolean isStale0 = (oldAge0 != currentAge);
 
-            tableData[index] = newData;
-            tableLocks[index] = newLock;
+            // If this update is deeper than Slot 0 or Slot 0 is stale, promote to Slot 0
+            if (depth > oldDepth0 || isStale0) {
+                if (unpackFlag(data0) != FLAG_NONE) {
+                    tableData[slot1] = data0;
+                    tableLocks[slot1] = lock0;
+                }
+                int move = bestMove;
+                if (move == NO_MOVE) {
+                    move = unpackMove(data1);
+                }
+                long newData = packData(ttScore, move, depth, flag, currentAge);
+                tableData[slot0] = newData;
+                tableLocks[slot0] = zobristHash ^ newData;
+            } else {
+                int move = bestMove;
+                if (move == NO_MOVE) {
+                    move = unpackMove(data1);
+                }
+                long newData = packData(ttScore, move, depth, flag, currentAge);
+                tableData[slot1] = newData;
+                tableLocks[slot1] = zobristHash ^ newData;
+            }
+            return;
+        }
+
+        // Case 3: Key not in either slot
+        byte flag0 = unpackFlag(data0);
+        byte oldAge0 = unpackAge(data0);
+        int oldDepth0 = unpackDepth(data0);
+        boolean isStale0 = (oldAge0 != currentAge);
+
+        if (flag0 == FLAG_NONE || isStale0 || depth >= oldDepth0) {
+            // Demote old Slot 0 to Slot 1 if valid
+            if (flag0 != FLAG_NONE) {
+                tableData[slot1] = data0;
+                tableLocks[slot1] = lock0;
+            }
+            long newData = packData(ttScore, bestMove, depth, flag, currentAge);
+            tableData[slot0] = newData;
+            tableLocks[slot0] = zobristHash ^ newData;
+        } else {
+            // Slot 0 is deeper and active: store into Slot 1 (Always-Replace fallback)
+            long newData = packData(ttScore, bestMove, depth, flag, currentAge);
+            tableData[slot1] = newData;
+            tableLocks[slot1] = zobristHash ^ newData;
         }
     }
 

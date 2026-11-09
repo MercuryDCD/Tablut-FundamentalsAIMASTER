@@ -36,6 +36,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  *      parked in WAITING state (0.0% CPU usage) while the agent client blocks on socket read.
  *    - Dynamic Time Management: Master thread monitors deadlines and sets a volatile stopped flag,
  *      terminating all workers before returning the verified best move.
+ *    - Dynamic Empirical Effective Branching tracking (Phase 12 Pillar 4).
+ *    - Analytic Score-Bounded Escape & Mate Cutoffs (Phase 12 Pillar 1).
+ *    - Singular Tactical Extensions in Principal Variation Search (Phase 12 Pillar 5).
  */
 public final class ParallelSearchEngine implements AutoCloseable {
 
@@ -60,7 +63,8 @@ public final class ParallelSearchEngine implements AutoCloseable {
     private boolean useHeuristicEvaluation = true;
     private boolean usePVS = true;
     private boolean useAspirationWindow = true;
-    private double timeSafetyRatio = 0.90;
+    private boolean useLMR = true;
+    private double timeSafetyRatio = 0.94;
 
     // Ashton Tablut 2-fold repetition tracking
     private long[] gameHistory = null;
@@ -158,44 +162,43 @@ public final class ParallelSearchEngine implements AutoCloseable {
         List<Future<Long>> helperFutures = new ArrayList<>();
         if (numThreads > 1 && executor != null) {
             for (HelperWorker helper : helperWorkers) {
-                FastState helperState = rootState.duplicate();
-                helperFutures.add(executor.submit(new Callable<Long>() {
-                    @Override
-                    public Long call() {
-                        return helper.runHelperSearch(helperState, rootMoves, numRootMoves, coordinator);
-                    }
-                }));
+                helper.setup(rootState, rootMoves, numRootMoves, coordinator);
+                helperFutures.add(executor.submit(helper));
             }
         }
 
-        // 4. Master thread runs iterative deepening
-        FastState masterState = rootState.duplicate();
+        // 4. Master thread executes Iterative Deepening
         SearchEngine.SearchResult masterResult = masterWorker.runMasterSearch(
-                masterState, rootMoves, numRootMoves, coordinator, startTimeMs);
+                rootState, rootMoves, numRootMoves, coordinator, startTimeMs);
 
-        // 5. Signal all helper threads to stop and await clean termination
+        // Signal completion to all helper threads
         coordinator.stopped = true;
-        long totalNodes = masterResult.nodesVisited;
 
+        // 5. Await completion of helper threads to guarantee ZERO CPU during opponent turn
+        long totalHelperNodes = 0;
         for (Future<Long> future : helperFutures) {
             try {
-                totalNodes += future.get();
+                totalHelperNodes += future.get();
             } catch (Exception e) {
-                // Thread interrupted or completed
+                // Helper worker interrupted or terminated cleanly
             }
         }
 
-        long totalTimeMs = System.currentTimeMillis() - startTimeMs;
+        long totalNodesVisited = masterResult.nodesVisited + totalHelperNodes;
         return new SearchEngine.SearchResult(
                 masterResult.bestMove,
                 masterResult.bestScore,
                 masterResult.depthReached,
-                totalNodes,
-                totalTimeMs
+                totalNodesVisited,
+                masterResult.timeElapsedMs,
+                false
         );
     }
 
-    private static final class SearchCoordinator {
+    /**
+     * Internal coordinator sharing stopping criteria and history across threads.
+     */
+    static final class SearchCoordinator {
         final long hardDeadlineMs;
         final long allocatedTimeMs;
         final int maxDepth;
@@ -219,11 +222,15 @@ public final class ParallelSearchEngine implements AutoCloseable {
         final int threadId;
         final int[][] moveStack = new int[MAX_DEPTH][MoveGenerator.MAX_MOVES];
         final UndoInfo[] undoStack = new UndoInfo[MAX_DEPTH];
+        private final int[] rootMoveScores = new int[MoveGenerator.MAX_MOVES];
         final MoveOrderer moveOrderer = new MoveOrderer();
         final QuiescenceSearch quiescenceSearch = new QuiescenceSearch();
         final long[] searchPath = new long[MAX_DEPTH];
         long nodesVisited = 0;
         int repetitionEventCounter = 0;
+
+        double effectiveBranchingFactor = DEFAULT_BRANCHING_FACTOR;
+        long prevDepthDuration = 0;
 
         MasterWorker(int threadId) {
             this.threadId = threadId;
@@ -237,6 +244,8 @@ public final class ParallelSearchEngine implements AutoCloseable {
             this.nodesVisited = 0;
             this.repetitionEventCounter = 0;
             this.searchPath[0] = rootState.zobristHash;
+            this.effectiveBranchingFactor = DEFAULT_BRANCHING_FACTOR;
+            this.prevDepthDuration = 0;
             moveOrderer.clear();
             quiescenceSearch.setHeuristicWeights(weights);
             quiescenceSearch.setUseHeuristicEvaluation(useHeuristicEvaluation);
@@ -254,9 +263,9 @@ public final class ParallelSearchEngine implements AutoCloseable {
                 long depthStartTime = System.currentTimeMillis();
                 long elapsedSoFar = depthStartTime - startTimeMs;
 
-                // Predictive Soft Cutoff
+                // Predictive Soft Cutoff with dynamic effective branching
                 if (depth > 1) {
-                    double projectedTime = lastDepthDuration * DEFAULT_BRANCHING_FACTOR;
+                    double projectedTime = lastDepthDuration * effectiveBranchingFactor;
                     if (elapsedSoFar + projectedTime > coordinator.allocatedTimeMs) {
                         break;
                     }
@@ -282,7 +291,11 @@ public final class ParallelSearchEngine implements AutoCloseable {
                     }
                 }
                 int priorBest = (bestMoveOverall != Move.NULL_MOVE) ? bestMoveOverall : rootTtMove;
-                orderRootMoves(rootMoves, numRootMoves, priorBest);
+                if (useMoveOrdering) {
+                    moveOrderer.orderMoves(rootState, rootMoves, numRootMoves, priorBest, 0);
+                } else {
+                    orderRootMoves(rootMoves, numRootMoves, priorBest);
+                }
 
                 UndoInfo undo = undoStack[0];
                 boolean depthInterrupted = false;
@@ -290,6 +303,7 @@ public final class ParallelSearchEngine implements AutoCloseable {
                 while (!depthInterrupted) {
                     bestScoreThisDepth = -BaselineEvaluation.INFINITY;
                     bestMoveThisDepth = Move.NULL_MOVE;
+                    java.util.Arrays.fill(rootMoveScores, 0, numRootMoves, -BaselineEvaluation.INFINITY);
                     int currentAlpha = alpha;
 
                     for (int i = 0; i < numRootMoves; i++) {
@@ -298,11 +312,11 @@ public final class ParallelSearchEngine implements AutoCloseable {
 
                         int score;
                         if (i == 0 || !usePVS) {
-                            score = -negamax(rootState, depth - 1, -beta, -currentAlpha, 1, coordinator);
+                            score = -negamax(rootState, depth - 1, -beta, -currentAlpha, 1, 0, coordinator);
                         } else {
-                            score = -negamax(rootState, depth - 1, -currentAlpha - 1, -currentAlpha, 1, coordinator);
+                            score = -negamax(rootState, depth - 1, -currentAlpha - 1, -currentAlpha, 1, 0, coordinator);
                             if (score > currentAlpha && score < beta && !coordinator.stopped) {
-                                score = -negamax(rootState, depth - 1, -beta, -currentAlpha, 1, coordinator);
+                                score = -negamax(rootState, depth - 1, -beta, -currentAlpha, 1, 0, coordinator);
                             }
                         }
 
@@ -312,6 +326,8 @@ public final class ParallelSearchEngine implements AutoCloseable {
                             depthInterrupted = true;
                             break;
                         }
+
+                        rootMoveScores[i] = score;
 
                         if (score > bestScoreThisDepth) {
                             bestScoreThisDepth = score;
@@ -325,8 +341,8 @@ public final class ParallelSearchEngine implements AutoCloseable {
                             break;
                         }
 
-                        // Early Mate Cutoff: If a guaranteed forced win was discovered, terminate root search immediately
-                        if (bestScoreThisDepth >= WIN_THRESHOLD) {
+                        // Early Mate Cutoff: If an instant 1-ply forced win was discovered, terminate root search immediately
+                        if (bestScoreThisDepth >= BaselineEvaluation.WIN_SCORE - 1) {
                             coordinator.stopped = true; // Signal all helper threads to halt
                             break;
                         }
@@ -349,10 +365,43 @@ public final class ParallelSearchEngine implements AutoCloseable {
                 }
 
                 if (!depthInterrupted) {
+                    // Root Anti-Hanging Move Tie-Breaker (Phase 13 Pillar 3)
+                    if (bestScoreThisDepth < WIN_THRESHOLD && bestMoveThisDepth != Move.NULL_MOVE) {
+                        boolean topHangs = SearchEngine.leavesFriendlyPieceHanging(rootState, bestMoveThisDepth);
+                        if (topHangs) {
+                            int safestMove = bestMoveThisDepth;
+                            int safestScore = bestScoreThisDepth;
+                            for (int i = 0; i < numRootMoves; i++) {
+                                int candidateMove = rootMoves[i];
+                                int candidateScore = rootMoveScores[i];
+                                if (candidateMove != bestMoveThisDepth && candidateScore >= bestScoreThisDepth - SearchEngine.ANTI_HANGING_TIE_TOLERANCE) {
+                                    if (!SearchEngine.leavesFriendlyPieceHanging(rootState, candidateMove)) {
+                                        if (safestMove == bestMoveThisDepth || candidateScore > safestScore) {
+                                            safestMove = candidateMove;
+                                            safestScore = candidateScore;
+                                        }
+                                    }
+                                }
+                            }
+                            if (safestMove != bestMoveThisDepth) {
+                                bestMoveThisDepth = safestMove;
+                                bestScoreThisDepth = safestScore;
+                            }
+                        }
+                    }
+
                     bestMoveOverall = bestMoveThisDepth;
                     bestScoreOverall = bestScoreThisDepth;
                     completedDepth = depth;
-                    lastDepthDuration = System.currentTimeMillis() - depthStartTime;
+                    long currentDepthDuration = System.currentTimeMillis() - depthStartTime;
+
+                    // Dynamic Effective Branching Calibration: clamp between 2.2 and 4.5
+                    if (depth >= 3 && prevDepthDuration > 5 && currentDepthDuration > 5) {
+                        double ratio = (double) currentDepthDuration / prevDepthDuration;
+                        this.effectiveBranchingFactor = Math.max(2.2, Math.min(4.5, ratio));
+                    }
+                    prevDepthDuration = currentDepthDuration;
+                    lastDepthDuration = currentDepthDuration;
 
                     if (useTranspositionTable) {
                         sharedTt.record(rootState.zobristHash, depth, bestScoreOverall,
@@ -373,9 +422,13 @@ public final class ParallelSearchEngine implements AutoCloseable {
         }
 
         private int negamax(FastState state, int depth, int alpha, int beta, int ply, SearchCoordinator coordinator) {
+            return negamax(state, depth, alpha, beta, ply, 0, coordinator);
+        }
+
+        private int negamax(FastState state, int depth, int alpha, int beta, int ply, int extensions, SearchCoordinator coordinator) {
             nodesVisited++;
             if ((nodesVisited & 4095) == 0) {
-                if (System.currentTimeMillis() >= coordinator.hardDeadlineMs) {
+                if (System.currentTimeMillis() >= coordinator.hardDeadlineMs || coordinator.stopped) {
                     coordinator.stopped = true;
                     return 0;
                 }
@@ -388,10 +441,16 @@ public final class ParallelSearchEngine implements AutoCloseable {
             // Ashton Tablut 2-fold repetition rule: immediate draw
             if (ply > 0 && isRepetition(state.zobristHash, ply, coordinator)) {
                 repetitionEventCounter++;
-                return 0;
+                return HeuristicEvaluation.evaluateDraw(state);
             }
             if (ply < MAX_DEPTH) {
                 searchPath[ply] = state.zobristHash;
+            }
+
+            // Analytic Score-Bounded Escape & Mate Cutoff (Phase 12 Pillar 1)
+            int forcedMateScore = TacticalCutoffs.detectForcedTacticalMate(state, ply);
+            if (forcedMateScore != TacticalCutoffs.NO_FORCED_MATE) {
+                return forcedMateScore;
             }
 
             int repAtEntry = repetitionEventCounter;
@@ -438,6 +497,25 @@ public final class ParallelSearchEngine implements AutoCloseable {
                 moveOrderer.scoreMoves(state, moves, numMoves, ttMove, ply);
             }
 
+            // Singular Tactical Extension check (Phase 12 Pillar 5)
+            boolean isTacticalExtension = false;
+            if (extensions < 3 && depth > 0 && ply < MAX_DEPTH - 2) {
+                if (numMoves == 1) {
+                    isTacticalExtension = true;
+                } else if (state.turn == BoardConstants.BLACK_TURN && state.kingSquare != BoardConstants.THRONE) {
+                    if (TacticalCutoffs.countKingEscapeCorridors(state, state.kingSquare) == 1) {
+                        isTacticalExtension = true;
+                    }
+                } else if (state.turn == BoardConstants.WHITE_TURN &&
+                           WhiteHeuristics.evaluateKingVulnerability(state, state.kingSquare, BoardConstants.row(state.kingSquare), BoardConstants.col(state.kingSquare)) >= 4) {
+                    isTacticalExtension = true;
+                }
+            }
+
+            int nextDepth = isTacticalExtension ? depth : depth - 1;
+            int nextExt = isTacticalExtension ? extensions + 1 : extensions;
+
+            boolean kingThreatenedAtEntry = (state.turn == BoardConstants.WHITE_TURN && QuiescenceSearch.isKingThreatened(state));
             UndoInfo undo = undoStack[ply];
             int origAlpha = alpha;
             int bestScore = -BaselineEvaluation.INFINITY;
@@ -445,15 +523,38 @@ public final class ParallelSearchEngine implements AutoCloseable {
 
             for (int i = 0; i < numMoves; i++) {
                 int move = useMoveOrdering ? moveOrderer.selectBest(moves, numMoves, i, ply) : moves[i];
+                int from = Move.getFrom(move);
+                boolean isKingMove = (from == state.kingSquare);
+
                 state.makeMove(move, undo);
+
+                boolean isCapture = (undo.capturedCount > 0);
+                boolean isKingThreat = (state.kingSquare != BoardConstants.THRONE &&
+                        TacticalCutoffs.countKingEscapeCorridors(state, state.kingSquare) > 0)
+                        || QuiescenceSearch.isKingThreatened(state);
+                boolean isQuiet = !isKingMove && !isCapture && !isKingThreat;
 
                 int score;
                 if (i == 0 || !usePVS) {
-                    score = -negamax(state, depth - 1, -beta, -alpha, ply + 1, coordinator);
+                    score = -negamax(state, nextDepth, -beta, -alpha, ply + 1, nextExt, coordinator);
                 } else {
-                    score = -negamax(state, depth - 1, -alpha - 1, -alpha, ply + 1, coordinator);
+                    // Principal Variation Search with Late Move Reductions (LMR)
+                    boolean doLMR = useLMR && i >= 3 && depth >= 3 && !isTacticalExtension && !kingThreatenedAtEntry && isQuiet;
+                    if (doLMR) {
+                        int r = (int) (0.75 + Math.log(depth) * Math.log(i) / 2.25);
+                        r = Math.max(1, Math.min(depth - 2, r));
+                        int reducedDepth = Math.max(1, nextDepth - r);
+
+                        score = -negamax(state, reducedDepth, -alpha - 1, -alpha, ply + 1, nextExt, coordinator);
+                        if (score > alpha && !coordinator.stopped) {
+                            score = -negamax(state, nextDepth, -alpha - 1, -alpha, ply + 1, nextExt, coordinator);
+                        }
+                    } else {
+                        score = -negamax(state, nextDepth, -alpha - 1, -alpha, ply + 1, nextExt, coordinator);
+                    }
+
                     if (score > alpha && score < beta && !coordinator.stopped) {
-                        score = -negamax(state, depth - 1, -beta, -alpha, ply + 1, coordinator);
+                        score = -negamax(state, nextDepth, -beta, -alpha, ply + 1, nextExt, coordinator);
                     }
                 }
 
@@ -475,8 +576,7 @@ public final class ParallelSearchEngine implements AutoCloseable {
                         sharedTt.record(state.zobristHash, depth, score, TranspositionTable.FLAG_LOWER_BOUND, move, ply);
                     }
                     if (useMoveOrdering) {
-                        int from = Move.getFrom(move);
-                        int to   = Move.getTo(move);
+                        int to = Move.getTo(move);
                         if (MoveOrderer.evaluateCaptures(state, state.board[from], to) == 0) {
                             moveOrderer.recordKiller(ply, move);
                             moveOrderer.recordHistory(move, depth);
@@ -523,15 +623,21 @@ public final class ParallelSearchEngine implements AutoCloseable {
     /**
      * Helper worker thread participating in Lazy SMP search diversification.
      */
-    private final class HelperWorker {
+    private final class HelperWorker implements Callable<Long> {
         final int threadId;
         final int[][] moveStack = new int[MAX_DEPTH][MoveGenerator.MAX_MOVES];
         final UndoInfo[] undoStack = new UndoInfo[MAX_DEPTH];
+        private final int[] rootMoveScores = new int[MoveGenerator.MAX_MOVES];
         final MoveOrderer moveOrderer = new MoveOrderer();
         final QuiescenceSearch quiescenceSearch = new QuiescenceSearch();
         final long[] searchPath = new long[MAX_DEPTH];
         long nodesVisited = 0;
         int repetitionEventCounter = 0;
+
+        FastState rootState;
+        int[] baseRootMoves;
+        int numRootMoves;
+        SearchCoordinator coordinator;
 
         HelperWorker(int threadId) {
             this.threadId = threadId;
@@ -540,13 +646,24 @@ public final class ParallelSearchEngine implements AutoCloseable {
             }
         }
 
-        long runHelperSearch(FastState rootState, int[] baseRootMoves, int numRootMoves, SearchCoordinator coordinator) {
+        void setup(FastState state, int[] rootMoves, int numRootMoves, SearchCoordinator coordinator) {
+            this.rootState = state.duplicate();
+            this.baseRootMoves = rootMoves;
+            this.numRootMoves = numRootMoves;
+            this.coordinator = coordinator;
             this.nodesVisited = 0;
             this.repetitionEventCounter = 0;
-            this.searchPath[0] = rootState.zobristHash;
-            moveOrderer.clear();
-            quiescenceSearch.setHeuristicWeights(weights);
-            quiescenceSearch.setUseHeuristicEvaluation(useHeuristicEvaluation);
+            this.searchPath[0] = state.zobristHash;
+            this.moveOrderer.clear();
+            this.quiescenceSearch.setHeuristicWeights(weights);
+            this.quiescenceSearch.setUseHeuristicEvaluation(useHeuristicEvaluation);
+        }
+
+        @Override
+        public Long call() {
+            if (coordinator.stopped || numRootMoves <= 1) {
+                return nodesVisited;
+            }
 
             // Diversification: Rotate root moves based on threadId
             int[] rootMoves = new int[numRootMoves];
@@ -560,7 +677,6 @@ public final class ParallelSearchEngine implements AutoCloseable {
             int bestMoveOverall = Move.NULL_MOVE;
 
             for (int depth = startDepth; depth <= searchLimitDepth && !coordinator.stopped; depth++) {
-                // Diversification & ordering: bring prior best move or shared TT best move to position 0
                 int bestSoFar = bestMoveOverall;
                 if (bestSoFar == Move.NULL_MOVE && useTranspositionTable) {
                     int ttIdx = sharedTt.probe(rootState.zobristHash);
@@ -592,11 +708,11 @@ public final class ParallelSearchEngine implements AutoCloseable {
                     rootState.makeMove(move, undo);
                     int score;
                     if (i == 0 || !usePVS) {
-                        score = -negamax(rootState, depth - 1, -beta, -alpha, 1, coordinator);
+                        score = -negamax(rootState, depth - 1, -beta, -alpha, 1, 0, coordinator);
                     } else {
-                        score = -negamax(rootState, depth - 1, -alpha - 1, -alpha, 1, coordinator);
+                        score = -negamax(rootState, depth - 1, -alpha - 1, -alpha, 1, 0, coordinator);
                         if (score > alpha && score < beta && !coordinator.stopped) {
-                            score = -negamax(rootState, depth - 1, -beta, -alpha, 1, coordinator);
+                            score = -negamax(rootState, depth - 1, -beta, -alpha, 1, 0, coordinator);
                         }
                     }
                     rootState.unmakeMove(move, undo);
@@ -627,6 +743,10 @@ public final class ParallelSearchEngine implements AutoCloseable {
         }
 
         private int negamax(FastState state, int depth, int alpha, int beta, int ply, SearchCoordinator coordinator) {
+            return negamax(state, depth, alpha, beta, ply, 0, coordinator);
+        }
+
+        private int negamax(FastState state, int depth, int alpha, int beta, int ply, int extensions, SearchCoordinator coordinator) {
             nodesVisited++;
             if ((nodesVisited & 4095) == 0) {
                 if (System.currentTimeMillis() >= coordinator.hardDeadlineMs || coordinator.stopped) {
@@ -642,10 +762,16 @@ public final class ParallelSearchEngine implements AutoCloseable {
             // Ashton Tablut 2-fold repetition rule: immediate draw
             if (ply > 0 && isRepetition(state.zobristHash, ply, coordinator)) {
                 repetitionEventCounter++;
-                return 0;
+                return HeuristicEvaluation.evaluateDraw(state);
             }
             if (ply < MAX_DEPTH) {
                 searchPath[ply] = state.zobristHash;
+            }
+
+            // Analytic Score-Bounded Escape & Mate Cutoff (Phase 12 Pillar 1)
+            int forcedMateScore = TacticalCutoffs.detectForcedTacticalMate(state, ply);
+            if (forcedMateScore != TacticalCutoffs.NO_FORCED_MATE) {
+                return forcedMateScore;
             }
 
             int repAtEntry = repetitionEventCounter;
@@ -692,6 +818,25 @@ public final class ParallelSearchEngine implements AutoCloseable {
                 moveOrderer.scoreMoves(state, moves, numMoves, ttMove, ply);
             }
 
+            // Singular Tactical Extension check (Phase 12 Pillar 5)
+            boolean isTacticalExtension = false;
+            if (extensions < 3 && depth > 0 && ply < MAX_DEPTH - 2) {
+                if (numMoves == 1) {
+                    isTacticalExtension = true;
+                } else if (state.turn == BoardConstants.BLACK_TURN && state.kingSquare != BoardConstants.THRONE) {
+                    if (TacticalCutoffs.countKingEscapeCorridors(state, state.kingSquare) == 1) {
+                        isTacticalExtension = true;
+                    }
+                } else if (state.turn == BoardConstants.WHITE_TURN &&
+                           WhiteHeuristics.evaluateKingVulnerability(state, state.kingSquare, BoardConstants.row(state.kingSquare), BoardConstants.col(state.kingSquare)) >= 4) {
+                    isTacticalExtension = true;
+                }
+            }
+
+            int nextDepth = isTacticalExtension ? depth : depth - 1;
+            int nextExt = isTacticalExtension ? extensions + 1 : extensions;
+
+            boolean kingThreatenedAtEntry = (state.turn == BoardConstants.WHITE_TURN && QuiescenceSearch.isKingThreatened(state));
             UndoInfo undo = undoStack[ply];
             int origAlpha = alpha;
             int bestScore = -BaselineEvaluation.INFINITY;
@@ -699,15 +844,38 @@ public final class ParallelSearchEngine implements AutoCloseable {
 
             for (int i = 0; i < numMoves; i++) {
                 int move = useMoveOrdering ? moveOrderer.selectBest(moves, numMoves, i, ply) : moves[i];
+                int from = Move.getFrom(move);
+                boolean isKingMove = (from == state.kingSquare);
+
                 state.makeMove(move, undo);
+
+                boolean isCapture = (undo.capturedCount > 0);
+                boolean isKingThreat = (state.kingSquare != BoardConstants.THRONE &&
+                        TacticalCutoffs.countKingEscapeCorridors(state, state.kingSquare) > 0)
+                        || QuiescenceSearch.isKingThreatened(state);
+                boolean isQuiet = !isKingMove && !isCapture && !isKingThreat;
 
                 int score;
                 if (i == 0 || !usePVS) {
-                    score = -negamax(state, depth - 1, -beta, -alpha, ply + 1, coordinator);
+                    score = -negamax(state, nextDepth, -beta, -alpha, ply + 1, nextExt, coordinator);
                 } else {
-                    score = -negamax(state, depth - 1, -alpha - 1, -alpha, ply + 1, coordinator);
+                    // Principal Variation Search with Late Move Reductions (LMR)
+                    boolean doLMR = useLMR && i >= 3 && depth >= 3 && !isTacticalExtension && !kingThreatenedAtEntry && isQuiet;
+                    if (doLMR) {
+                        int r = (int) (0.75 + Math.log(depth) * Math.log(i) / 2.25);
+                        r = Math.max(1, Math.min(depth - 2, r));
+                        int reducedDepth = Math.max(1, nextDepth - r);
+
+                        score = -negamax(state, reducedDepth, -alpha - 1, -alpha, ply + 1, nextExt, coordinator);
+                        if (score > alpha && !coordinator.stopped) {
+                            score = -negamax(state, nextDepth, -alpha - 1, -alpha, ply + 1, nextExt, coordinator);
+                        }
+                    } else {
+                        score = -negamax(state, nextDepth, -alpha - 1, -alpha, ply + 1, nextExt, coordinator);
+                    }
+
                     if (score > alpha && score < beta && !coordinator.stopped) {
-                        score = -negamax(state, depth - 1, -beta, -alpha, ply + 1, coordinator);
+                        score = -negamax(state, nextDepth, -beta, -alpha, ply + 1, nextExt, coordinator);
                     }
                 }
 
@@ -729,8 +897,7 @@ public final class ParallelSearchEngine implements AutoCloseable {
                         sharedTt.record(state.zobristHash, depth, score, TranspositionTable.FLAG_LOWER_BOUND, move, ply);
                     }
                     if (useMoveOrdering) {
-                        int from = Move.getFrom(move);
-                        int to   = Move.getTo(move);
+                        int to = Move.getTo(move);
                         if (MoveOrderer.evaluateCaptures(state, state.board[from], to) == 0) {
                             moveOrderer.recordKiller(ply, move);
                             moveOrderer.recordHistory(move, depth);
@@ -783,7 +950,7 @@ public final class ParallelSearchEngine implements AutoCloseable {
             int score = BaselineEvaluation.WIN_SCORE - ply;
             return (state.turn == BoardConstants.BLACK_TURN) ? score : -score;
         }
-        return BaselineEvaluation.DRAW_SCORE;
+        return HeuristicEvaluation.evaluateDraw(state);
     }
 
     private static void orderRootMoves(int[] moves, int numMoves, int pvMove) {
@@ -800,10 +967,6 @@ public final class ParallelSearchEngine implements AutoCloseable {
         }
     }
 
-    public int getNumThreads() {
-        return numThreads;
-    }
-
     public void setTimeSafetyRatio(double ratio) {
         if (ratio > 0.0 && ratio <= 0.98) {
             this.timeSafetyRatio = ratio;
@@ -812,6 +975,16 @@ public final class ParallelSearchEngine implements AutoCloseable {
 
     public double getTimeSafetyRatio() {
         return timeSafetyRatio;
+    }
+
+    public double getEffectiveBranchingFactor() {
+        return masterWorker.effectiveBranchingFactor;
+    }
+
+    public void setEffectiveBranchingFactor(double b) {
+        if (b >= 1.5 && b <= 8.0) {
+            masterWorker.effectiveBranchingFactor = b;
+        }
     }
 
     public void setUseOpeningBook(boolean use) {
@@ -862,6 +1035,14 @@ public final class ParallelSearchEngine implements AutoCloseable {
 
     public boolean isUseAspirationWindow() {
         return useAspirationWindow;
+    }
+
+    public void setUseLMR(boolean use) {
+        this.useLMR = use;
+    }
+
+    public boolean isUseLMR() {
+        return useLMR;
     }
 
     public TranspositionTable getTranspositionTable() {
