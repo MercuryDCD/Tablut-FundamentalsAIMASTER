@@ -435,7 +435,7 @@
 * **`scripts/tournament_vs_opponents.ps1`**:
   * Unified multi-competitor tournament harness supporting UNIBO champion engines (`brainmates`, `thor`), teammate `luca`, or round-robin `all` with strict color symmetry.
 * **`scripts/tournament_vs_luca.ps1`**:
-  * End-to-end competition tournament runner pitting Antigravity against teammate Luca's `TablutNegamaxClient` (`team/luca`, `NeuralEvaluator`, 40 features, 4-thread Lazy SMP) at full timeout (45s/mov).
+  * End-to-end competition tournament runner pitting DajeGeppetto against teammate Luca's `TablutNegamaxClient` (`team/luca`, `NeuralEvaluator`, 40 features, 4-thread Lazy SMP) at full timeout (45s/mov).
 * **`scripts/match_official.ps1`**:
   * Automated runner for single matches on the official `Server.jar` referee (ports 5800/5801) vs `RANDOM`, teammate `LUCA` (`team/luca`), or self-play.
 * **`scripts/match_versions.ps1`**:

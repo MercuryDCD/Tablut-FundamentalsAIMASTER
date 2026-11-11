@@ -2,7 +2,7 @@ param(
     [ValidateSet("WHITE", "BLACK")]
     [string]$Role = "WHITE",
 
-    [ValidateSet("RANDOM", "LUCA", "ANTIGRAVITY")]
+    [ValidateSet("RANDOM", "LUCA", "DAJEGEPPETTO")]
     [string]$Opponent = "RANDOM",
 
     [int]$Timeout = 10,
@@ -35,7 +35,7 @@ Remove-Item $serverLog, $serverErr, $whiteLog, $whiteErr, $blackLog, $blackErr -
 
 Write-Host "=========================================================="
 Write-Host "  OFFICIAL REFEREE MATCH"
-Write-Host "  Role of Antigravity : $Role"
+Write-Host "  Role of DajeGeppetto: $Role"
 Write-Host "  Opponent            : $Opponent"
 Write-Host "  Decision Timeout    : ${Timeout}s"
 Write-Host "  GUI Enabled         : $EnableGui"
@@ -52,31 +52,33 @@ Start-Sleep -Seconds 2
 function Start-WhitePlayer {
     param([string]$Type)
     Write-Host "2. Starting White Player ($Type)..."
-    if ($Type -eq "ANTIGRAVITY") {
+    if ($Type -eq "DAJEGEPPETTO") {
         return Start-Process powershell -ArgumentList "-File `"$RunPlayer`" -Role WHITE -Timeout $Timeout -ServerIp localhost" -RedirectStandardOutput $whiteLog -RedirectStandardError $whiteErr -PassThru
     } elseif ($Type -eq "RANDOM") {
         return Start-Process java -ArgumentList "-jar `"$RandomJar`" WHITE $Timeout localhost" -RedirectStandardOutput $whiteLog -RedirectStandardError $whiteErr -PassThru
     } elseif ($Type -eq "LUCA") {
-        $LucaWeights = Join-Path $BaseDir "team\luca\Tablut\pretrained_weights\pretrained_default.txt"
-        return Start-Process java -ArgumentList "-cp `"$LucaCp`" it.unibo.ai.didattica.competition.tablut.client.TablutNegamaxClient WHITE $Timeout localhost `"$LucaWeights`" threads=4" -RedirectStandardOutput $whiteLog -RedirectStandardError $whiteErr -PassThru
+        $LucaWeights = Join-Path $BaseDir "team\luca\Tablut\pesi_nnue\t1500000.nnue"
+        if (!(Test-Path $LucaWeights)) { $LucaWeights = Join-Path $BaseDir "team\luca\Tablut\pesi_v4\cnn_t1500000_v4.txt" }
+        return Start-Process java -ArgumentList "-cp `"$LucaCp`" it.unibo.ai.didattica.competition.tablut.client.TablutNegamaxClient WHITE $Timeout localhost `"$LucaWeights`" threads=4 order=rec" -RedirectStandardOutput $whiteLog -RedirectStandardError $whiteErr -PassThru
     }
 }
 
 function Start-BlackPlayer {
     param([string]$Type)
     Write-Host "3. Starting Black Player ($Type)..."
-    if ($Type -eq "ANTIGRAVITY") {
+    if ($Type -eq "DAJEGEPPETTO") {
         return Start-Process powershell -ArgumentList "-File `"$RunPlayer`" -Role BLACK -Timeout $Timeout -ServerIp localhost" -RedirectStandardOutput $blackLog -RedirectStandardError $blackErr -PassThru
     } elseif ($Type -eq "RANDOM") {
         return Start-Process java -ArgumentList "-jar `"$RandomJar`" BLACK $Timeout localhost" -RedirectStandardOutput $blackLog -RedirectStandardError $blackErr -PassThru
     } elseif ($Type -eq "LUCA") {
-        $LucaWeights = Join-Path $BaseDir "team\luca\Tablut\pretrained_weights\pretrained_default.txt"
-        return Start-Process java -ArgumentList "-cp `"$LucaCp`" it.unibo.ai.didattica.competition.tablut.client.TablutNegamaxClient BLACK $Timeout localhost `"$LucaWeights`" threads=4" -RedirectStandardOutput $blackLog -RedirectStandardError $blackErr -PassThru
+        $LucaWeights = Join-Path $BaseDir "team\luca\Tablut\pesi_nnue\t1500000.nnue"
+        if (!(Test-Path $LucaWeights)) { $LucaWeights = Join-Path $BaseDir "team\luca\Tablut\pesi_v4\cnn_t1500000_v4.txt" }
+        return Start-Process java -ArgumentList "-cp `"$LucaCp`" it.unibo.ai.didattica.competition.tablut.client.TablutNegamaxClient BLACK $Timeout localhost `"$LucaWeights`" threads=4 order=rec" -RedirectStandardOutput $blackLog -RedirectStandardError $blackErr -PassThru
     }
 }
 
-$whiteType = if ($Role -eq "WHITE") { "ANTIGRAVITY" } else { $Opponent }
-$blackType = if ($Role -eq "BLACK") { "ANTIGRAVITY" } else { $Opponent }
+$whiteType = if ($Role -eq "WHITE") { "DAJEGEPPETTO" } else { $Opponent }
+$blackType = if ($Role -eq "BLACK") { "DAJEGEPPETTO" } else { $Opponent }
 
 try {
     $whiteProc = Start-WhitePlayer -Type $whiteType
@@ -115,7 +117,7 @@ if (Test-Path $serverLog) {
 }
 
 Write-Host "----------------------------------------------------------"
-Write-Host "ANTIGRAVITY LOG SUMMARY ($Role):"
+Write-Host "DAJEGEPPETTO LOG SUMMARY ($Role):"
 $agentLog = if ($Role -eq "WHITE") { $whiteLog } else { $blackLog }
 if (Test-Path $agentLog) {
     Get-Content $agentLog | Select-Object -Last 15

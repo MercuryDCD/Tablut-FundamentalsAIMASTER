@@ -1,4 +1,4 @@
-# Antigravity — Autonomous Tablut AI Engine
+# DajeGeppetto — Autonomous Tablut AI Engine
 
 > **UNIBO Tablut Challenge (A.A. 2026/2027)**  
 > *Fundamentals of Artificial Intelligence and Knowledge Representation*
@@ -13,7 +13,7 @@ An autonomous, tournament-grade Artificial Intelligence agent engineered to comp
 
 ## 1. Competitive Benchmark (vs UNIBO Champions)
 
-In the pre-freeze official tournament benchmark at **30 seconds per move** on the referee server (`Server.jar -t 30`), Antigravity competed against the top historical champions and modern neural engines:
+In the pre-freeze official tournament benchmark at **30 seconds per move** on the referee server (`Server.jar -t 30`), DajeGeppetto competed against the top historical champions and modern neural engines:
 
 | Opponent | Profile | Score | Match Breakdown |
 | :--- | :--- | :---: | :--- |
@@ -60,7 +60,7 @@ Ashton Tablut is an asymmetric $9 \times 9$ strategy game played between two une
 
 ## 2. Architectural Vision & Decision Flow
 
-How does the Antigravity agent choose its moves in a tournament match?
+How does the DajeGeppetto agent choose its moves in a tournament match?
 
 ```mermaid
 flowchart TD
@@ -90,7 +90,7 @@ flowchart TD
 
 ## 3. How the Engine Thinks (The Intuition Behind Every Module)
 
-Rather than treating AI algorithms as black boxes, each component in Antigravity was chosen to address a specific game-theoretic challenge:
+Rather than treating AI algorithms as black boxes, each component in DajeGeppetto was chosen to address a specific game-theoretic challenge:
 
 ### 3.1 Flat 81-Byte Board (`FastState.java`)
 * **The Problem:** In Java, creating objects during search (`new Board()`, `new Move()`) triggers Garbage Collection (GC) pauses. In a 45-second tournament match, a single 500ms GC pause can cause a forfeit.

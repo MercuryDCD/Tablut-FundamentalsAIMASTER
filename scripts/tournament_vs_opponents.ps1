@@ -13,15 +13,25 @@ $BaseDir = Split-Path -Parent $ScriptDir
 $ServerJar = Join-Path $BaseDir "TablutCompetition-master\Tablut\Executables\Server.jar"
 $StarterLib = Join-Path $BaseDir "TablutCompetition-master\Tablut\lib\*"
 
-# Antigravity setup (direct Java execution to avoid child PID orphan leaks)
-$AntigravityBin = Join-Path $BaseDir "bin"
-$AntigravityCp = "$AntigravityBin;$ServerJar;$StarterLib"
+# DajeGeppetto setup (direct Java execution to avoid child PID orphan leaks)
+$DajeGeppettoBin = Join-Path $BaseDir "bin"
+$DajeGeppettoCp = "$DajeGeppettoBin;$ServerJar;$StarterLib"
+
+if (!(Test-Path (Join-Path $DajeGeppettoBin "tablut\engine\TablutAgentClient.class"))) {
+    Write-Host "Compiling DajeGeppetto into bin/..." -ForegroundColor Yellow
+    New-Item -ItemType Directory -Force -Path $DajeGeppettoBin | Out-Null
+    $compileSources = Get-ChildItem (Join-Path $BaseDir "src\tablut\engine\*.java") | ForEach-Object { $_.FullName }
+    javac -cp "$ServerJar;$StarterLib" -d $DajeGeppettoBin $compileSources
+}
 
 # Luca setup
 $LucaBin = Join-Path $BaseDir "team\luca\Tablut\bin"
 $LucaLib = Join-Path $BaseDir "team\luca\Tablut\lib\*"
 $LucaCp = "$LucaBin;$LucaLib"
-$LucaWeights = Join-Path $BaseDir "team\luca\Tablut\pretrained_weights\pretrained_default.txt"
+$LucaWeights = Join-Path $BaseDir "team\luca\Tablut\pesi_nnue\t1500000.nnue"
+if (!(Test-Path $LucaWeights)) {
+    $LucaWeights = Join-Path $BaseDir "team\luca\Tablut\pesi_v4\cnn_t1500000_v4.txt"
+}
 
 # BrAInmates setup
 $BrainmatesJar = Join-Path $BaseDir "competitors\brainmates\jars\BrAInmates.jar"
@@ -38,8 +48,8 @@ $opponentsToRun = if ($Opponent -eq "all") { @("brainmates", "thor", "luca") } e
 
 $allResults = @()
 
-function Start-AntigravityProcess([string]$role, [string]$logFile, [string]$errFile) {
-    return Start-Process java -ArgumentList "-cp `"$AntigravityCp`" tablut.engine.TablutAgentClient $role $Timeout localhost" -RedirectStandardOutput $logFile -RedirectStandardError $errFile -PassThru
+function Start-DajeGeppettoProcess([string]$role, [string]$logFile, [string]$errFile) {
+    return Start-Process java -ArgumentList "-cp `"$DajeGeppettoCp`" tablut.engine.TablutAgentClient $role $Timeout localhost" -RedirectStandardOutput $logFile -RedirectStandardError $errFile -PassThru
 }
 
 function Cleanup-Ports {
@@ -79,28 +89,28 @@ function Start-OpponentProcess([string]$oppName, [string]$role, [string]$logFile
 
 foreach ($targetOpp in $opponentsToRun) {
     Write-Host "`n================================================================================" -ForegroundColor Cyan
-    Write-Host "  TOURNAMENT BENCHMARK: ANTIGRAVITY vs $($targetOpp.ToUpper())" -ForegroundColor Cyan
+    Write-Host "  TOURNAMENT BENCHMARK: DAJEGEPPETTO vs $($targetOpp.ToUpper())" -ForegroundColor Cyan
     Write-Host "  Total Games         : $Games (Alternating White / Black)"
     Write-Host "  Decision Timeout    : ${Timeout}s per move"
     Write-Host "================================================================================" -ForegroundColor Cyan
 
     for ($g = 1; $g -le $Games; $g++) {
-        $antiRole = if ($g -eq 1) { "WHITE" } elseif ($g -eq 2) { "BLACK" } else { "WHITE" }
-        $oppRole = if ($antiRole -eq "WHITE") { "BLACK" } else { "WHITE" }
+        $dajeRole = if ($g -eq 1) { "WHITE" } elseif ($g -eq 2) { "BLACK" } else { "WHITE" }
+        $oppRole = if ($dajeRole -eq "WHITE") { "BLACK" } else { "WHITE" }
 
-        Write-Host "`n>>> [GAME $g / $Games] Antigravity ($antiRole) vs $($targetOpp.ToUpper()) ($oppRole) | Timeout: ${Timeout}s" -ForegroundColor Yellow
+        Write-Host "`n>>> [GAME $g / $Games] DajeGeppetto ($dajeRole) vs $($targetOpp.ToUpper()) ($oppRole) | Timeout: ${Timeout}s" -ForegroundColor Yellow
 
         $serverLog = Join-Path $LogsDir "${targetOpp}_tourn_g${g}_server.log"
         $serverErr = Join-Path $LogsDir "${targetOpp}_tourn_g${g}_server_err.log"
-        $antiLog = Join-Path $LogsDir "${targetOpp}_tourn_g${g}_antigravity.log"
-        $antiErr = Join-Path $LogsDir "${targetOpp}_tourn_g${g}_antigravity_err.log"
+        $dajeLog = Join-Path $LogsDir "${targetOpp}_tourn_g${g}_dajegeppetto.log"
+        $dajeErr = Join-Path $LogsDir "${targetOpp}_tourn_g${g}_dajegeppetto_err.log"
         $oppLog = Join-Path $LogsDir "${targetOpp}_tourn_g${g}_opp.log"
         $oppErr = Join-Path $LogsDir "${targetOpp}_tourn_g${g}_opp_err.log"
 
-        $whiteLog = if ($antiRole -eq "WHITE") { $antiLog } else { $oppLog }
-        $whiteErr = if ($antiRole -eq "WHITE") { $antiErr } else { $oppErr }
-        $blackLog = if ($antiRole -eq "BLACK") { $antiLog } else { $oppLog }
-        $blackErr = if ($antiRole -eq "BLACK") { $antiErr } else { $oppErr }
+        $whiteLog = if ($dajeRole -eq "WHITE") { $dajeLog } else { $oppLog }
+        $whiteErr = if ($dajeRole -eq "WHITE") { $dajeErr } else { $oppErr }
+        $blackLog = if ($dajeRole -eq "BLACK") { $dajeLog } else { $oppLog }
+        $blackErr = if ($dajeRole -eq "BLACK") { $dajeErr } else { $oppErr }
 
         # Clean up any lingering port bindings and ensure ports 5800/5801 are genuinely free
         $portsClear = Wait-PortsFree 20
@@ -149,16 +159,16 @@ foreach ($targetOpp in $opponentsToRun) {
 
         try {
             # 1. Start White
-            if ($antiRole -eq "WHITE") {
-                $whiteProc = Start-AntigravityProcess "WHITE" $whiteLog $whiteErr
+            if ($dajeRole -eq "WHITE") {
+                $whiteProc = Start-DajeGeppettoProcess "WHITE" $whiteLog $whiteErr
             } else {
                 $whiteProc = Start-OpponentProcess $targetOpp "WHITE" $whiteLog $whiteErr
             }
             Start-Sleep -Milliseconds 800
 
             # 2. Start Black
-            if ($antiRole -eq "BLACK") {
-                $blackProc = Start-AntigravityProcess "BLACK" $blackLog $blackErr
+            if ($dajeRole -eq "BLACK") {
+                $blackProc = Start-DajeGeppettoProcess "BLACK" $blackLog $blackErr
             } else {
                 $blackProc = Start-OpponentProcess $targetOpp "BLACK" $blackLog $blackErr
             }
@@ -222,10 +232,10 @@ foreach ($targetOpp in $opponentsToRun) {
             $winLine = $lines | Where-Object { $_ -match "RESULT:" -or $_ -match "has lost!" -or $_ -match "TOO MANY ERRORS" } | Select-Object -Last 1
             if ($winLine -match "PLAYER WHITE WIN" -or $winLine -match "Player B.*has lost" -or $winLine -match "FOR BLACK PLAYER; PLAYER WHITE WIN") {
                 $winnerColor = "WHITE"
-                $outcome = if ($antiRole -eq "WHITE") { "ANTIGRAVITY_WIN" } else { "OPPONENT_WIN" }
+                $outcome = if ($dajeRole -eq "WHITE") { "DAJEGEPPETTO_WIN" } else { "OPPONENT_WIN" }
             } elseif ($winLine -match "PLAYER BLACK WIN" -or $winLine -match "Player W.*has lost" -or $winLine -match "FOR WHITE PLAYER; PLAYER BLACK WIN") {
                 $winnerColor = "BLACK"
-                $outcome = if ($antiRole -eq "BLACK") { "ANTIGRAVITY_WIN" } else { "OPPONENT_WIN" }
+                $outcome = if ($dajeRole -eq "BLACK") { "DAJEGEPPETTO_WIN" } else { "OPPONENT_WIN" }
             } elseif ($winLine -match "DRAW") {
                 $winnerColor = "DRAW"
                 $outcome = "DRAW"
@@ -235,7 +245,7 @@ foreach ($targetOpp in $opponentsToRun) {
         $resObj = [PSCustomObject]@{
             Opponent     = $targetOpp
             Game         = $g
-            AntiRole     = $antiRole
+            DajeRole     = $dajeRole
             OppRole      = $oppRole
             Plies        = $plies
             WinnerColor  = $winnerColor
@@ -244,7 +254,7 @@ foreach ($targetOpp in $opponentsToRun) {
         }
         $allResults += $resObj
 
-        $color = if ($outcome -eq "ANTIGRAVITY_WIN") { "Green" } elseif ($outcome -eq "OPPONENT_WIN") { "Red" } else { "Yellow" }
+        $color = if ($outcome -eq "DAJEGEPPETTO_WIN") { "Green" } elseif ($outcome -eq "OPPONENT_WIN") { "Red" } else { "Yellow" }
         Write-Host "Game $g Finished: Outcome = $outcome | Winner = $winnerColor | Plies = $plies | Time = ${elapsedSec}s" -ForegroundColor $color
 
         Start-Sleep -Seconds 4
@@ -257,17 +267,17 @@ Write-Host "  OVERALL TOURNAMENT RESULTS SUMMARY" -ForegroundColor Cyan
 Write-Host "================================================================================" -ForegroundColor Cyan
 $allResults | Format-Table -AutoSize | Out-String | Write-Host
 
-$antiTotalWins = @($allResults | Where-Object { $_.Outcome -eq "ANTIGRAVITY_WIN" }).Count
+$dajeTotalWins = @($allResults | Where-Object { $_.Outcome -eq "DAJEGEPPETTO_WIN" }).Count
 $oppTotalWins = @($allResults | Where-Object { $_.Outcome -eq "OPPONENT_WIN" }).Count
 $draws = @($allResults | Where-Object { $_.Outcome -eq "DRAW" }).Count
 $totalGames = @($allResults).Count
-$score = $antiTotalWins + 0.5 * $draws
+$score = $dajeTotalWins + 0.5 * $draws
 
 Write-Host "Total Games Played : $totalGames"
-Write-Host "Antigravity Wins   : $antiTotalWins ($([math]::Round($antiTotalWins * 100 / [math]::Max(1, $totalGames), 1))%)" -ForegroundColor Green
+Write-Host "DajeGeppetto Wins  : $dajeTotalWins ($([math]::Round($dajeTotalWins * 100 / [math]::Max(1, $totalGames), 1))%)" -ForegroundColor Green
 Write-Host "Opponents Wins     : $oppTotalWins ($([math]::Round($oppTotalWins * 100 / [math]::Max(1, $totalGames), 1))%)" -ForegroundColor Red
 Write-Host "Draws              : $draws ($([math]::Round($draws * 100 / [math]::Max(1, $totalGames), 1))%)" -ForegroundColor Yellow
-Write-Host "Antigravity Score  : $score / $totalGames ($([math]::Round($score * 100 / [math]::Max(1, $totalGames), 1))%)" -ForegroundColor Cyan
+Write-Host "DajeGeppetto Score : $score / $totalGames ($([math]::Round($score * 100 / [math]::Max(1, $totalGames), 1))%)" -ForegroundColor Cyan
 
 $reportPath = Join-Path $LogsDir "multi_competitor_tournament_$(Get-Date -Format 'yyyyMMdd_HHmmss').json"
 $allResults | ConvertTo-Json -Depth 4 | Set-Content $reportPath

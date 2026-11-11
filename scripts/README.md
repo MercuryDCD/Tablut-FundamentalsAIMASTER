@@ -1,4 +1,4 @@
-# Scripts Directory — Antigravity Tablut Engine
+# Scripts Directory — DajeGeppetto Tablut Engine
 
 This directory contains automation utilities for training, benchmarking, referee match execution, and log analysis.
 

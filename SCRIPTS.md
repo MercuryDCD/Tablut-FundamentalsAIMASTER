@@ -1,4 +1,4 @@
-# Guía Operativa y Catálogo de Scripts — Antigravity Tablut Engine
+# Guía Operativa y Catálogo de Scripts — DajeGeppetto Tablut Engine
 
 Manual centralizado de referencia de todos los scripts, comandos de ejecución, pipelines de entrenamiento y suites de prueba del proyecto. Diseñado para desacoplar las instrucciones operativas de [`README.md`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/README.md) y [`GEMINI.md`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/GEMINI.md).
 
@@ -13,7 +13,7 @@ Manual centralizado de referencia de todos los scripts, comandos de ejecución, 
 | **Inyectar pesos de checkpoint a Java** | `python scripts/apply_weights.py` |
 | **Torneo contra rivales (BrAInmates, THoR, Luca)** | `.\scripts\tournament_vs_opponents.ps1 -Opponent all -Games 2 -Timeout 45` |
 | **Torneo solo contra BrAInmates (Campeón 2020)** | `.\scripts\tournament_vs_opponents.ps1 -Opponent brainmates -Games 4 -Timeout 45` |
-| **Torneo vs Luca (Red Neuronal)** | `.\scripts\tournament_vs_luca.ps1 -Games 2 -Timeout 45` |
+| **Torneo vs Luca (Red Neuronal / NNUE)** | `.\scripts\tournament_vs_luca.ps1 -Games 10 -Timeout 60` |
 | **Match inter-versiones (HEAD vs versión anterior)** | `.\scripts\match_versions.ps1 -Games 2 -Timeout 15 -Commit HEAD~1` |
 | **Partida oficial con GUI vs Luca (45s)** | `.\scripts\match_official.ps1 -Role WHITE -Opponent LUCA -Timeout 45 -EnableGui` |
 | **Partida oficial rápida vs RandomPlayer (10s)** | `.\scripts\match_official.ps1 -Role WHITE -Opponent RANDOM -Timeout 10` |
@@ -24,6 +24,10 @@ Manual centralizado de referencia de todos los scripts, comandos de ejecución, 
 | **Compilar el motor Java (Windows PowerShell)** | `javac -cp "TablutCompetition-master\Tablut\Executables\Server.jar;TablutCompetition-master\Tablut\lib\*" -d bin src\tablut\engine\*.java` |
 | **Ejecución oficial del agente (Windows)** | `.\runmyplayer.ps1 -Role WHITE -Timeout 60 -ServerIp localhost` |
 | **Ejecución oficial del agente (Linux / VM)** | `./runmyplayer.sh WHITE 60 localhost` |
+| **Certificación local completa pre-entrega** | `.\scripts\verify_local.ps1` |
+| **Certificación dentro de la VM (Bash)** | `./scripts/verify_vm.sh` |
+| **Limpieza y purgado previo a exportar OVA** | `./scripts/clean_vm.sh` |
+| **Generar manifiesto de entrega y hash SHA-256** | `.\scripts\generate_submission_manifest.ps1 -OvaPath <fichero.ova>` |
 
 ---
 
@@ -143,7 +147,7 @@ python scripts/apply_weights.py --dry-run
 
 ## 4. Partidas Individuales y Validación Oficial
 
-Ejecutan el servidor oficial ([`Server.jar`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/TablutCompetition-master/Tablut/Executables/Server.jar)), el agente Antigravity y el oponente sobre sockets TCP en puertos 5800/5801.
+Ejecutan el servidor oficial ([`Server.jar`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/TablutCompetition-master/Tablut/Executables/Server.jar)), el agente DajeGeppetto y el oponente sobre sockets TCP en puertos 5800/5801.
 
 ### 4.1 Partida Oficial Parametrizable (`scripts/match_official.ps1`)
 Orquesta una partida completa gestionando el ciclo de vida de los procesos, redirección de logs en `logs/` y parada forzada limpia al terminar.
@@ -163,8 +167,8 @@ Orquesta una partida completa gestionando el ciclo de vida de los procesos, redi
 ```
 
 #### Parámetros:
-* `-Role <WHITE | BLACK>`: Rol de Antigravity (defecto: `WHITE`).
-* `-Opponent <RANDOM | LUCA | ANTIGRAVITY>`: Oponente a lanzar (defecto: `RANDOM`).
+* `-Role <WHITE | BLACK>`: Rol de DajeGeppetto (defecto: `WHITE`).
+* `-Opponent <RANDOM | LUCA | DAJEGEPPETTO>`: Oponente a lanzar (defecto: `RANDOM`).
 * `-Timeout <segundos>`: Tiempo límite por movimiento en segundos (defecto: `10`).
 * `-EnableGui`: Abre la ventana GUI de Java del servidor de arbitraje oficial.
 
@@ -184,7 +188,7 @@ Comprobación mínima de sanidad end-to-end contra `RandomPlayer.jar`.
 ## 5. Torneos y Benchmarking contra Rivales
 
 ### 5.1 Torneo Multi-Rival (`scripts/tournament_vs_opponents.ps1`)
-Harness de torneo automatizado que enfrenta a Antigravity contra los motores de referencia de la competición UNIBO disponibles en [`competitors/`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/competitors) y [`team/`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/team). Garantiza simetría de color (partidas pares alternando White/Black).
+Harness de torneo automatizado que enfrenta a DajeGeppetto contra los motores de referencia de la competición UNIBO disponibles en [`competitors/`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/competitors) y [`team/`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/team). Garantiza simetría de color (partidas pares alternando White/Black).
 
 * **Rivales configurados:**
   1. `brainmates`: **BrAInmates** (Campeón absoluto del torneo UNIBO 2020).
@@ -215,15 +219,30 @@ Harness de torneo automatizado que enfrenta a Antigravity contra los motores de 
 ---
 
 ### 5.2 Torneo Específico vs Luca (`scripts/tournament_vs_luca.ps1`)
-Runner optimizado para matches directos contra la arquitectura del compañero de equipo Luca.
+Runner optimizado para matches directos contra la arquitectura de Luca (evaluación NNUE incremental o CNN v4 híbrida, ordenamiento `order=rec` y 4 hilos Lazy SMP). Guarda telemetría en tiempo real en `logs/luca_tournament_summary.txt`.
 
 ```powershell
-# 2 partidas alternando colores a 45s:
-.\scripts\tournament_vs_luca.ps1 -Games 2 -Timeout 45
+# Modo nocturno recomendado: 10 partidas alternando colores a 60s contra NNUE (t1500000.nnue):
+.\scripts\tournament_vs_luca.ps1 -Games 10 -Timeout 60
 
-# 4 partidas con GUI activada:
-.\scripts\tournament_vs_luca.ps1 -Games 4 -Timeout 45 -EnableGui
+# Torneo largo de 20 partidas a 60s:
+.\scripts\tournament_vs_luca.ps1 -Games 20 -Timeout 60
+
+# Torneo contra la red CNN previa de 1.5M pasos (cnn_t1500000_v4.txt):
+.\scripts\tournament_vs_luca.ps1 -Games 10 -Timeout 60 -LucaWeights cnn_t1500000_v4.txt
+
+# Torneo rápido de 2 partidas con GUI activada:
+.\scripts\tournament_vs_luca.ps1 -Games 2 -Timeout 60 -EnableGui
 ```
+
+#### Parámetros:
+* `-Games <N>`: Número total de partidas con alternancia estricta de color White/Black (defecto: `10`).
+* `-Timeout <segundos>`: Tiempo límite por movimiento en segundos (defecto: `60`).
+* `-MaxPlies <N>`: Límite máximo de semi-jugadas por partida antes de adjudicar empate por fortaleza (defecto: `80`, evita bucles infinitos de peones).
+* `-LucaAlgo <negamax | mcts>`: Motor de búsqueda de Luca (defecto: `negamax`).
+* `-LucaWeights <fichero>`: Fichero de pesos (defecto: `pesi_nnue/t1500000.nnue`; admite también `cnn_t1500000_v4.txt`).
+* `-EvalBackend <auto | nnue | cnn | mlp | simple>`: Backend de inferencia de Luca (defecto: `auto`).
+* `-EnableGui`: Abre la ventana gráfica oficial de `Server.jar`.
 
 ---
 
@@ -379,3 +398,42 @@ CP="bin:TablutCompetition-master/Tablut/Executables/Server.jar:TablutCompetition
 java -cp "$CP" tablut.engine.RuleVerificationTest
 java -cp "$CP" tablut.engine.Phase12OptimizationsTest
 ```
+
+---
+
+## 8. Certificación y Despliegue en la Máquina Virtual (Pre-Submission)
+
+Scripts para validar los **10 invariantes oficiales** de la competición antes de exportar el appliance `.ova`.
+
+### 8.1 Certificación Local en Windows (`scripts/verify_local.ps1`)
+Ejecuta la pipeline de compilación limpia, chequeo de immutabilidad de ficheros del starter, conversión de finales de línea a POSIX LF, y ejecución de la batería de tests unitarios:
+```powershell
+# Certificación completa con partida rápida contra RandomPlayer:
+.\scripts\verify_local.ps1
+
+# Certificación rápida (omitiendo la partida smoke):
+.\scripts\verify_local.ps1 -SkipMatch
+```
+
+### 8.2 Certificación dentro de la VM Debian (`scripts/verify_vm.sh`)
+Ejecutar dentro de la máquina virtual oficial en `/home/tablut/tablut`:
+```bash
+cd /home/tablut/tablut
+chmod +x scripts/verify_vm.sh
+./scripts/verify_vm.sh
+```
+
+### 8.3 Limpieza y Purgado Previo a la Exportación (`scripts/clean_vm.sh`)
+Ejecutar dentro de la VM justo antes de apagarla para exportar el `.ova`. Recompila `bin/`, borra logs, scratch, caché de apt y vacía el historial de bash:
+```bash
+cd /home/tablut/tablut
+chmod +x scripts/clean_vm.sh
+./scripts/clean_vm.sh
+```
+
+### 8.4 Generador de Manifiesto y Checksum SHA-256 (`scripts/generate_submission_manifest.ps1`)
+Ejecutar en la máquina anfitriona tras exportar el fichero OVA desde VirtualBox. Calcula el hash SHA-256, el tamaño del fichero y formatea el archivo `submission_manifest.txt` listo para subir a Virtuale:
+```powershell
+.\scripts\generate_submission_manifest.ps1 -OvaPath "Tablut_DajeGeppetto_Submission.ova" -OneDriveUrl "https://liveunibo-my.sharepoint.com/:u:/g/personal/..."
+```
+

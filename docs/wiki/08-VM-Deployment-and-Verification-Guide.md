@@ -1,6 +1,6 @@
 # 08 — VM Deployment & Verification Guide (Pre-Submission Readiness)
 
-This guide provides the complete, step-by-step procedure for importing, configuring, building, running, and rigorously verifying the Antigravity Tablut agent inside the official Debian competition Virtual Machine (VM) prior to tournament submission.
+This guide provides the complete, step-by-step procedure for importing, configuring, building, running, and rigorously verifying the DajeGeppetto Tablut agent inside the official Debian competition Virtual Machine (VM) prior to tournament submission.
 
 Following this runbook guarantees that the agent satisfies all official tournament regulations set by the University of Bologna course staff, preventing automatic disqualification due to runtime failures, network dependencies, illegal moves, timeout forfeits, or disk saturation.
 
@@ -190,7 +190,7 @@ Test complete TCP socket handshake and game loop execution against the official 
   ```
 * **Verification Criteria:**
   - Connection is established immediately on port 5800/5801.
-  - Player handshake sends `"Antigravity"` with 4-byte big-endian framing.
+  - Player handshake sends `"DajeGeppetto"` with 4-byte big-endian framing.
   - Engine wins as White within 10–25 moves with 0 illegal moves.
 
 ### Invariant 3: Adversary Turn CPU Invariant (0.0% CPU)
@@ -292,7 +292,7 @@ sudo shutdown -h now
 1. In VirtualBox, select the `Tablut` VM (state must be **Powered Off**).
 2. Click **File $\to$ Export Appliance...**
 3. **Format:** Open Virtualization Format 1.0 (`.ova`).
-4. **File Name:** `Tablut_Antigravity_Submission.ova`.
+4. **File Name:** `Tablut_DajeGeppetto_Submission.ova`.
 5. Click **Finish** and wait for export to complete.
 
 ### Step 6.3: Compute Checksum of Exported Appliance
@@ -300,18 +300,18 @@ On your host machine (PowerShell or Bash), compute the SHA-256 hash:
 
 ```powershell
 # Windows PowerShell:
-Get-FileHash -Algorithm SHA256 Tablut_Antigravity_Submission.ova
+Get-FileHash -Algorithm SHA256 Tablut_DajeGeppetto_Submission.ova
 ```
 
 ```bash
 # Linux / macOS:
-sha256sum Tablut_Antigravity_Submission.ova
+sha256sum Tablut_DajeGeppetto_Submission.ova
 ```
 
 Record this hash: it confirms file integrity and proves that the uploaded file matches your tested local image.
 
 ### Step 6.4: Upload to UNIBO OneDrive & Prepare Submission `.txt`
-1. Upload `Tablut_Antigravity_Submission.ova` to your institutional UNIBO OneDrive account ([`https://liveunibo-my.sharepoint.com/`](https://liveunibo-my.sharepoint.com/)).
+1. Upload `Tablut_DajeGeppetto_Submission.ova` to your institutional UNIBO OneDrive account ([`https://liveunibo-my.sharepoint.com/`](https://liveunibo-my.sharepoint.com/)).
 2. Right-click the uploaded `.ova` file $\to$ **Share** $\to$ Select **"Anyone with the link can view"** or **"People in University of Bologna with the link can view"**.
 3. Create the submission document `submission.txt` for the Virtuale assignment:
 
@@ -320,14 +320,14 @@ Record this hash: it confirms file integrity and proves that the uploaded file m
 TABLUT CHALLENGE 2026/2027 — SUBMISSION MANIFEST
 ================================================================================
 
-Team / Player Name: Antigravity
+Team / Player Name: DajeGeppetto
 Repository URL: https://github.com/MercuryDCD/Tablut-FundamentalsAIMASTER
 
 1. VIRTUAL MACHINE DOWNLOAD LINK (OneDrive):
 https://liveunibo-my.sharepoint.com/:u:/g/personal/... (Paste Link Here)
 
 2. SHA-256 CHECKSUM:
-[Insert SHA-256 Hash of Tablut_Antigravity_Submission.ova]
+[Insert SHA-256 Hash of Tablut_DajeGeppetto_Submission.ova]
 
 3. COMMAND-LINE EXECUTION:
 The player is located at /home/tablut/tablut and launched via runmyplayer.sh:

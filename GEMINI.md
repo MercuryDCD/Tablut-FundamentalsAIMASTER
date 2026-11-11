@@ -521,14 +521,14 @@ python scripts/apply_weights.py
 ### Phase 9: Peer-Engine Benchmarking (Luca's MLP Architecture) & Tactical Refinement Plan [COMPLETED]
 * **Educational & Research Objective:** Compare classical high-throughput heuristic evaluation against multi-layer perceptron neural network evaluation (MLP) under official competition constraints (45s per move, 4 vCPUs, Debian VM), diagnose late-game inefficiencies, and implement an algorithmic refinement plan.
 * **Empirical Head-to-Head Tournament Results (45s / move, Official `Server.jar`):**
-  - **Match Pair Execution:** Conducted a color-balanced 2-game tournament via `scripts/tournament_vs_luca.ps1` pitting `Antigravity` against Luca's `TablutNegamaxClient` (`NeuralEvaluator`, 40 continuous geometric features, 1,402 parameters, 4-thread Lazy SMP):
-    1. *Game 1 (Antigravity WHITE vs Luca BLACK):* **Antigravity Win** in 29 plies (837.8 s). Instant $D_4$ opening `e3 -> d3` (3 ms). At ply 8 (`c7 -> b7`, depth 12, 52.8M nodes), Antigravity detected the forced King escape sequence, calculating mate at ply 9 (`Score: 99987`) while Luca's neural evaluator evaluated the position as normal (`-71.8`). King escaped through `c9`.
-    2. *Game 2 (Antigravity BLACK vs Luca WHITE):* **Antigravity Win** in 46 plies (1,452 s). Instant opening `e2 -> c2` (6 ms). Antigravity achieved sustained depths 8–9 exploring up to 217.5M nodes per move (~5.37M NPS). White was squeezed into the center and encircled on `d4` at ply 23 (`Score: 99999`).
-  - **Total Score:** **2 - 0 (100% Winrate)** for Antigravity.
+  - **Match Pair Execution:** Conducted a color-balanced 2-game tournament via `scripts/tournament_vs_luca.ps1` pitting `DajeGeppetto` against Luca's `TablutNegamaxClient` (`NeuralEvaluator`, 40 continuous geometric features, 1,402 parameters, 4-thread Lazy SMP):
+    1. *Game 1 (DajeGeppetto WHITE vs Luca BLACK):* **DajeGeppetto Win** in 29 plies (837.8 s). Instant $D_4$ opening `e3 -> d3` (3 ms). At ply 8 (`c7 -> b7`, depth 12, 52.8M nodes), DajeGeppetto detected the forced King escape sequence, calculating mate at ply 9 (`Score: 99987`) while Luca's neural evaluator evaluated the position as normal (`-71.8`). King escaped through `c9`.
+    2. *Game 2 (DajeGeppetto BLACK vs Luca WHITE):* **DajeGeppetto Win** in 46 plies (1,452 s). Instant opening `e2 -> c2` (6 ms). DajeGeppetto achieved sustained depths 8–9 exploring up to 217.5M nodes per move (~5.37M NPS). White was squeezed into the center and encircled on `d4` at ply 23 (`Score: 99999`).
+  - **Total Score:** **2 - 0 (100% Winrate)** for DajeGeppetto.
 * **Core Architectural Comparison:**
-  - *Evaluation Cost:* Antigravity linear evaluator costs ~32 ns/node; Luca's 40-feature MLP costs ~2,880 ns/node (~90x slower).
-  - *Node Throughput:* Antigravity searches 3.5M–5.4M NPS across 4 cores; Luca searches 155k–175k NPS.
-  - *Search Depth Delta:* In 40.5s decision time, Antigravity consistently searches 4–5 plies deeper (depth 8–12 vs depth 6–7), which decisively dominates nonlinear feature modeling in a high-branching game like Tablut ($b \approx 45$).
+  - *Evaluation Cost:* DajeGeppetto linear evaluator costs ~32 ns/node; Luca's 40-feature MLP costs ~2,880 ns/node (~90x slower).
+  - *Node Throughput:* DajeGeppetto searches 3.5M–5.4M NPS across 4 cores; Luca searches 155k–175k NPS.
+  - *Search Depth Delta:* In 40.5s decision time, DajeGeppetto consistently searches 4–5 plies deeper (depth 8–12 vs depth 6–7), which decisively dominates nonlinear feature modeling in a high-branching game like Tablut ($b \approx 45$).
 * **Implemented Algorithmic Refinement (3 Pillars):**
   1. **Multi-Ply Opening Book Expansion (`OpeningBook.java`):**
      - Expanded canonical $D_4$ opening lines from 12 lines (3 plies) to **24 canonical lines (up to 6 plies)**, including specific counter-responses to Luca's moves (`f1f3` countered with `d5d6`, `e6f6` countered with `e8g8`).
@@ -598,7 +598,7 @@ python scripts/apply_weights.py
      - Reconstructs move sequences across the opening window (default: first 6 plies), aggregating branch win-rates ($W\%, B\%, D\%$).
      - Identifies high-leverage branches to directly expand canonical lines in `OpeningBook.java`.
   4. **Telemetry & Log Architecture Documentation:**
-     - Formal distinction between official referee adjudications (`gameLog.txt`, `systemLog.txt`) and engine process captures (`*_antigravity.log`, `*_opp.log`, `*_server.log`).
+     - Formal distinction between official referee adjudications (`gameLog.txt`, `systemLog.txt`) and engine process captures (`*_dajegeppetto.log`, `*_opp.log`, `*_server.log`).
 
 ---
 
@@ -606,10 +606,10 @@ python scripts/apply_weights.py
 * **Educational & Strategic Rationale:**
   - *Post-Mortem of Head-to-Head Benchmark vs. Luca's MCTS (v4 CNN weights, 15s/move):*
     - **Match Result:** **1 - 1** (Both engines won as Black).
-    - *Game 1 (Antigravity WHITE vs. Luca MCTS BLACK):* White lost in 48 plies. Our linear evaluation function suffered from the **"Peón Señuelo" (Decoy Pawn) dispersion syndrome**: purely additive linear evaluation ($\sum w_i f_i$) rewarded pushing White pawns outward towards the camp frentes (`campFrontPreserved`) and diamond positions (`diamondOccupancy`), while penalizing the King for remaining in the Castle. White defenders scattered to the wings in isolation, completely decoupling from the King. Luca's MCTS exploited this with 3x3 spatial receptive fields (convolutional filters) that recognized local encirclement cordons and maintained an unbreakable ring around the Throne, suffocating White.
-    - *Game 2 (Luca MCTS WHITE vs. Antigravity BLACK):* Black won in 44 plies. Antigravity punished White's overextended pawn on `h4` with an active custodian capture. Deprived of tactical options, Luca's score-bounded MCTS recognized an unavoidable defeat (`valore = -1.000, DIMOSTRATO sconfitta`) on move 20.
+    - *Game 1 (DajeGeppetto WHITE vs. Luca MCTS BLACK):* White lost in 48 plies. Our linear evaluation function suffered from the **"Peón Señuelo" (Decoy Pawn) dispersion syndrome**: purely additive linear evaluation ($\sum w_i f_i$) rewarded pushing White pawns outward towards the camp frentes (`campFrontPreserved`) and diamond positions (`diamondOccupancy`), while penalizing the King for remaining in the Castle. White defenders scattered to the wings in isolation, completely decoupling from the King. Luca's MCTS exploited this with 3x3 spatial receptive fields (convolutional filters) that recognized local encirclement cordons and maintained an unbreakable ring around the Throne, suffocating White.
+    - *Game 2 (Luca MCTS WHITE vs. DajeGeppetto BLACK):* Black won in 44 plies. DajeGeppetto punished White's overextended pawn on `h4` with an active custodian capture. Deprived of tactical options, Luca's score-bounded MCTS recognized an unavoidable defeat (`valore = -1.000, DIMOSTRATO sconfitta`) on move 20.
   - *Core Comparative Insight:*
-    - **Throughput vs. Spatial Structure:** Antigravity evaluates ~5,000,000 NPS with a flat linear evaluation (~32 ns/eval). Luca's MCTS/CNN evaluates ~1,000–2,000 NPS (~2,000,000 ns/eval) but benefits from deep selective rollouts (depth 17–37 on critical lines) and 3x3 local convolution patterns (pinches, sandwich setups against camp barriers, and forks).
+    - **Throughput vs. Spatial Structure:** DajeGeppetto evaluates ~5,000,000 NPS with a flat linear evaluation (~32 ns/eval). Luca's MCTS/CNN evaluates ~1,000–2,000 NPS (~2,000,000 ns/eval) but benefits from deep selective rollouts (depth 17–37 on critical lines) and 3x3 local convolution patterns (pinches, sandwich setups against camp barriers, and forks).
     - **Architectural Synthesis (The Best of Both Worlds):** We do not need a 90x slower neural network to match these strengths. By translating spatial patterns (multi-piece pinches, defender shield cohesion, line-of-sight barrier anvils) into $O(1)$ compound bitboard/array heuristics, adding score-bounded analytic cutoffs, and extending singular forced moves, our high-throughput Minimax engine (~5M NPS) gains deep structural tactical vision without losing search depth.
 
 * **Exhaustive 7-Pillar Architecture & Enhancement Plan:**

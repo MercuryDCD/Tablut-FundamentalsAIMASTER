@@ -19,7 +19,7 @@ import java.net.UnknownHostException;
  */
 public final class TablutAgentClient extends TablutClient {
 
-    public static final String AGENT_NAME = "Antigravity";
+    public static final String AGENT_NAME = "DajeGeppetto";
 
     private final int timeoutSeconds;
     private final ParallelSearchEngine engine;
@@ -34,7 +34,7 @@ public final class TablutAgentClient extends TablutClient {
         super(role.toLowerCase(), AGENT_NAME, timeoutSeconds, serverIp);
         this.timeoutSeconds = timeoutSeconds;
         this.engine = new ParallelSearchEngine();
-        this.engine.setTimeSafetyRatio(0.94); // Parameterized 94% budget ratio (maximizes search time while preserving safe TCP margin)
+        this.engine.setTimeSafetyRatio(0.96); // Parameterized 96% budget ratio (maximizes search time while preserving safe TCP margin)
         this.fastState = new FastState();
     }
 

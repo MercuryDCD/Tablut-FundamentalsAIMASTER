@@ -39,7 +39,7 @@ String response = new String(buffer, StandardCharsets.UTF_8);
 ```
 
 ### 1.2 Handshake & Message Exchanges
-1. **Handshake:** Immediately upon opening the TCP connection, the client sends its player name string (e.g., `"Antigravity"`).
+1. **Handshake:** Immediately upon opening the TCP connection, the client sends its player name string (e.g., `"DajeGeppetto"`).
 2. **Initial State:** The client blocks on the socket to read the referee server's initial board state JSON.
 3. **Turn Loop:**
    * When it is the agent's turn to move, it computes the best action and dispatches a JSON move:

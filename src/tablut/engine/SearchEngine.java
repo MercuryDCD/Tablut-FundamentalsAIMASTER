@@ -23,7 +23,7 @@ public final class SearchEngine {
     public static final double DEFAULT_BRANCHING_FACTOR = 3.2;
 
     // Time management settings
-    private double timeSafetyRatio = 0.94; // Uses up to 94% of allowed budget, 6% safety buffer (matches competition rules)
+    private double timeSafetyRatio = 0.96; // Uses up to 96% of allowed budget, 4% safety buffer (matches competition rules)
     private double effectiveBranchingFactor = DEFAULT_BRANCHING_FACTOR;
     private long prevDepthDuration = 0;
 

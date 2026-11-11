@@ -64,7 +64,7 @@ public final class ParallelSearchEngine implements AutoCloseable {
     private boolean useAspirationWindow = true;
     private boolean useLMR = true;
     private boolean useContempt = true;
-    private double timeSafetyRatio = 0.94;
+    private double timeSafetyRatio = 0.96;
 
     // Ashton Tablut 2-fold repetition tracking
     private long[] gameHistory = null;
