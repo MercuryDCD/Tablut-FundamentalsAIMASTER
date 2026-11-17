@@ -22,8 +22,13 @@ def main():
     parser = argparse.ArgumentParser(description="Inject SPSA optimized weights into HeuristicWeights.java")
     parser.add_argument("--checkpoint", type=str, default=str(DEFAULT_CHECKPOINT),
                         help="Path to checkpoint_weights.json (default: checkpoint_weights.json)")
-    parser.add_argument("--use-active", action="store_true",
-                        help="Apply active_weights instead of best_weights")
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument("--use-active", action="store_true",
+                            help="Apply active_weights instead of best_weights")
+    mode_group.add_argument("--use-ema", action="store_true",
+                            help="Apply ema_weights instead of best_weights")
+    parser.add_argument("--sync-best", action="store_true",
+                        help="Sync best_weights and best_weights_dict in checkpoint_weights.json to the applied set")
     parser.add_argument("--dry-run", action="store_true",
                         help="Display changes without modifying HeuristicWeights.java or compiling")
     args = parser.parse_args()
@@ -40,13 +45,27 @@ def main():
     with open(ckpt_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    weight_key = "active_weights_dict" if args.use_active else "best_weights_dict"
-    if weight_key not in data and "weights_dict" in data:
-        weights_dict = data["weights_dict"]
-    elif weight_key in data:
-        weights_dict = data[weight_key]
+    if args.use_active:
+        weight_key = "active_weights_dict"
+        array_key = "active_weights"
+        applied_label = "active_weights"
+    elif args.use_ema:
+        weight_key = "ema_weights_dict"
+        array_key = "ema_weights"
+        applied_label = "ema_weights"
     else:
-        print(f"Error: Could not locate weight dictionary in {ckpt_path}", file=sys.stderr)
+        weight_key = "best_weights_dict"
+        array_key = "best_weights"
+        applied_label = "best_weights"
+
+    if weight_key in data:
+        weights_dict = data[weight_key]
+    elif "weights_dict" in data and not args.use_active and not args.use_ema:
+        weights_dict = data["weights_dict"]
+    elif array_key in data and "best_weights_dict" in data:
+        weights_dict = dict(zip(data["best_weights_dict"].keys(), data[array_key]))
+    else:
+        print(f"Error: Could not locate {weight_key} in {ckpt_path}", file=sys.stderr)
         sys.exit(1)
 
     print("=" * 70)
@@ -54,7 +73,7 @@ def main():
     print("=" * 70)
     print(f"  Source Checkpoint : {ckpt_path.resolve()}")
     print(f"  Target Java File  : {JAVA_WEIGHTS_FILE.resolve()}")
-    print(f"  Applied Set       : {'active_weights' if args.use_active else 'best_weights'}")
+    print(f"  Applied Set       : {applied_label}")
     print("-" * 70)
 
     # Read current Java file
@@ -101,6 +120,15 @@ def main():
     with open(JAVA_WEIGHTS_FILE, "w", encoding="utf-8") as f:
         f.write(modified_code)
     print(f"[+] Successfully updated {JAVA_WEIGHTS_FILE}")
+
+    if args.sync_best and (args.use_ema or args.use_active):
+        data["best_weights"] = [int(round(v)) for v in weights_dict.values()]
+        data["best_weights_dict"] = {k: int(round(v)) for k, v in weights_dict.items()}
+        tmp_ckpt = ckpt_path.with_suffix(".tmp")
+        with open(tmp_ckpt, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        tmp_ckpt.replace(ckpt_path)
+        print(f"[+] Synced best_weights / best_weights_dict in {ckpt_path} to {applied_label}")
 
     # Recompile Java classes
     print("[*] Recompiling Java engine binaries...")

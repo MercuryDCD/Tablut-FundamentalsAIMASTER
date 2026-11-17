@@ -46,6 +46,7 @@ public final class SearchEngine {
 
     // Parameterized weights for Phase 4, 5, 10, 12 SPSA tuning
     private HeuristicWeights weights = new HeuristicWeights();
+    private int whiteBaselineOffset = HeuristicEvaluation.computeInitialWhiteBias(this.weights);
 
     // Preallocated search structures (zero allocations in recursive loops)
     private final int[][] moveStack = new int[MAX_DEPTH][MoveGenerator.MAX_MOVES];
@@ -147,6 +148,7 @@ public final class SearchEngine {
     public void setHeuristicWeights(HeuristicWeights weights) {
         if (weights != null) {
             this.weights = weights;
+            this.whiteBaselineOffset = HeuristicEvaluation.computeInitialWhiteBias(weights);
             this.quiescenceSearch.setHeuristicWeights(weights);
         }
     }
@@ -170,6 +172,7 @@ public final class SearchEngine {
 
     public void setUseContempt(boolean use) {
         this.useContempt = use;
+        this.quiescenceSearch.setUseContempt(use);
     }
 
     public boolean isUseContempt() {
@@ -177,8 +180,10 @@ public final class SearchEngine {
     }
 
     private int evaluateDraw(FastState state) {
-        if (!useContempt) return BaselineEvaluation.DRAW_SCORE;
-        return HeuristicEvaluation.evaluateDraw(state);
+        if (!useHeuristicEvaluation) return BaselineEvaluation.DRAW_SCORE;
+        return useContempt
+                ? HeuristicEvaluation.evaluateDraw(state, whiteBaselineOffset)
+                : ((state.turn == BoardConstants.WHITE_TURN) ? whiteBaselineOffset : -whiteBaselineOffset);
     }
 
     public boolean isUsePVS() {
@@ -293,6 +298,7 @@ public final class SearchEngine {
             tt.newSearch();
         }
         moveOrderer.prepareNextSearch();
+        quiescenceSearch.prepareSearch(this.hardDeadlineMs, null);
         this.repetitionEventCounter = 0;
         this.lastCapturePly = 0;
         this.effectiveBranchingFactor = DEFAULT_BRANCHING_FACTOR;
@@ -309,7 +315,7 @@ public final class SearchEngine {
             long elapsedSoFar = depthStartTime - startTimeMs;
 
             // Tier 1: Predictive Soft Cutoff using dynamic effective branching factor
-            if (depth > 1) {
+            if (depth > 1 && elapsedSoFar >= (long) (allocatedTimeMs * 0.45)) {
                 double projectedTime = lastDepthDuration * effectiveBranchingFactor;
                 if (elapsedSoFar + projectedTime > allocatedTimeMs) {
                     break;
@@ -332,13 +338,16 @@ public final class SearchEngine {
             // the stable minimax score ordering from depth d-1 with priorBest promoted to front.
             int rootTtMove = Move.NULL_MOVE;
             if (useTranspositionTable) {
-                int ttIdx = tt.probe(rootState.zobristHash);
-                if (ttIdx != -1) {
-                    rootTtMove = tt.getBestMove(ttIdx);
+                long ttData = tt.probeRaw(rootState.zobristHash);
+                if (ttData != 0L) {
+                    rootTtMove = TranspositionTable.unpackMove(ttData);
                 }
             }
             int priorBest = (bestMoveOverall != Move.NULL_MOVE) ? bestMoveOverall : rootTtMove;
-            if (useMoveOrdering) {
+            if (completedDepth > 0) {
+                sortRootByScores(rootMoves, rootMoveScores, numRootMoves);
+                orderRootMoves(rootMoves, numRootMoves, priorBest);
+            } else if (useMoveOrdering) {
                 moveOrderer.orderMoves(rootState, rootMoves, numRootMoves, priorBest, 0);
             } else {
                 orderRootMoves(rootMoves, numRootMoves, priorBest);
@@ -366,7 +375,7 @@ public final class SearchEngine {
                         score = -negamax(rootState, depth - 1, -beta, -currentAlpha, 1, 0);
                     } else {
                         int scoutAlpha = (bestMoveHangs && currentAlpha > alpha)
-                                ? Math.max(alpha, currentAlpha - ANTI_HANGING_TIE_TOLERANCE)
+                                ? Math.max(alpha, currentAlpha - ANTI_HANGING_TIE_TOLERANCE - 1)
                                 : currentAlpha;
                         score = -negamax(rootState, depth - 1, -scoutAlpha - 1, -scoutAlpha, 1, 0);
                         if (score > scoutAlpha && score < beta && !stopped) {
@@ -424,16 +433,31 @@ public final class SearchEngine {
                 if (bestScoreThisDepth < WIN_THRESHOLD && bestMoveThisDepth != Move.NULL_MOVE) {
                     boolean topHangs = leavesFriendlyPieceHanging(rootState, bestMoveThisDepth);
                     if (topHangs) {
+                        int threshold = bestScoreThisDepth - ANTI_HANGING_TIE_TOLERANCE;
                         int safestMove = bestMoveThisDepth;
                         int safestScore = bestScoreThisDepth;
                         for (int i = 0; i < numRootMoves; i++) {
                             int candidateMove = rootMoves[i];
                             int candidateScore = rootMoveScores[i];
-                            if (candidateMove != bestMoveThisDepth && candidateScore >= bestScoreThisDepth - ANTI_HANGING_TIE_TOLERANCE) {
-                                if (!leavesFriendlyPieceHanging(rootState, candidateMove)) {
-                                    if (safestMove == bestMoveThisDepth || candidateScore > safestScore) {
-                                        safestMove = candidateMove;
-                                        safestScore = candidateScore;
+                            if (candidateMove != bestMoveThisDepth && candidateScore >= threshold) {
+                                if (safestMove == bestMoveThisDepth || candidateScore > safestScore) {
+                                    if (!leavesFriendlyPieceHanging(rootState, candidateMove)) {
+                                        boolean verified = (depth == 1);
+                                        if (!verified) {
+                                            rootState.makeMove(candidateMove, undo);
+                                            this.lastCapturePly = (undo.capturedCount > 0) ? 1 : 0;
+                                            int vScore = -negamax(rootState, depth - 1, -threshold, -(threshold - 1), 1, 0);
+                                            this.lastCapturePly = 0;
+                                            rootState.unmakeMove(candidateMove, undo);
+                                            verified = (!stopped && vScore >= threshold);
+                                            if (!verified && !stopped) {
+                                                rootMoveScores[i] = Math.min(rootMoveScores[i], threshold - 1);
+                                            }
+                                        }
+                                        if (verified) {
+                                            safestMove = candidateMove;
+                                            safestScore = candidateScore;
+                                        }
                                     }
                                 }
                             }
@@ -451,10 +475,11 @@ public final class SearchEngine {
 
                 long currentDepthDuration = System.currentTimeMillis() - depthStartTime;
 
-                // Dynamic Effective Branching Calibration: clamp between 2.2 and 4.5
+                // Dynamic Effective Branching Calibration: clamp between 2.2 and 3.5 with exponential smoothing
                 if (depth >= 3 && prevDepthDuration > 5 && currentDepthDuration > 5) {
                     double ratio = (double) currentDepthDuration / prevDepthDuration;
-                    this.effectiveBranchingFactor = Math.max(2.2, Math.min(4.5, ratio));
+                    double clamped = Math.max(2.2, Math.min(3.5, ratio));
+                    this.effectiveBranchingFactor = 0.65 * this.effectiveBranchingFactor + 0.35 * clamped;
                 }
                 prevDepthDuration = currentDepthDuration;
                 lastDepthDuration = currentDepthDuration;
@@ -525,12 +550,12 @@ public final class SearchEngine {
         // 1. Transposition Table Probe
         int ttMove = Move.NULL_MOVE;
         if (useTranspositionTable) {
-            int ttIndex = tt.probe(state.zobristHash);
-            if (ttIndex != -1) {
-                ttMove = tt.getBestMove(ttIndex);
-                if (tt.getDepth(ttIndex) >= depth) {
-                    byte flag = tt.getFlag(ttIndex);
-                    int ttScore = tt.getScore(ttIndex, ply);
+            long ttData = tt.probeRaw(state.zobristHash);
+            if (ttData != 0L) {
+                ttMove = TranspositionTable.unpackMove(ttData);
+                if (TranspositionTable.unpackDepth(ttData) >= depth) {
+                    byte flag = TranspositionTable.unpackFlag(ttData);
+                    int ttScore = TranspositionTable.unpackScore(ttData, ply);
                     if (flag == TranspositionTable.FLAG_EXACT) {
                         return ttScore;
                     } else if (flag == TranspositionTable.FLAG_LOWER_BOUND && ttScore >= beta) {
@@ -546,7 +571,12 @@ public final class SearchEngine {
         // 2. Leaf Node Evaluation with Quiescence Search
         if (depth <= 0) {
             if (useQuiescence) {
-                return quiescenceSearch.search(state, alpha, beta, 0, ply);
+                int qsScore = quiescenceSearch.search(state, alpha, beta, 0, ply);
+                if (quiescenceSearch.isStopped()) {
+                    stopped = true;
+                    return 0;
+                }
+                return qsScore;
             } else {
                 return evaluateLeaf(state);
             }
@@ -570,20 +600,22 @@ public final class SearchEngine {
             moveOrderer.scoreMoves(state, moves, numMoves, ttMove, ply);
         }
 
-        // Singular Tactical Extension check (Phase 12 Pillar 5)
+        // Singular Tactical Extension check (Phase 12 Pillar 5, hardened Phase 17)
         boolean isTacticalExtension = false;
-        if (extensions < 3 && depth > 0 && ply < MAX_DEPTH - 2) {
+        if (extensions < 1 && depth > 0 && ply < MAX_DEPTH - 2) {
             if (numMoves == 1) {
                 isTacticalExtension = true; // Fully forced singular move
-            } else if (state.turn == BoardConstants.BLACK_TURN && state.kingSquare != BoardConstants.THRONE) {
-                // White King commanding 1 open corridor forces Black into urgent singular defense
-                if (TacticalCutoffs.countKingEscapeCorridors(state, state.kingSquare) == 1) {
+            } else if (depth <= 2) {
+                if (state.turn == BoardConstants.BLACK_TURN && state.kingSquare != BoardConstants.THRONE) {
+                    // White King commanding 1 open corridor forces Black into urgent singular defense near horizon
+                    if (TacticalCutoffs.countKingEscapeCorridors(state, state.kingSquare) == 1) {
+                        isTacticalExtension = true;
+                    }
+                } else if (state.turn == BoardConstants.WHITE_TURN &&
+                           WhiteHeuristics.evaluateKingVulnerability(state, state.kingSquare, BoardConstants.row(state.kingSquare), BoardConstants.col(state.kingSquare)) >= 4) {
+                    // King under imminent custodian capture threat; White forced to defend near horizon
                     isTacticalExtension = true;
                 }
-            } else if (state.turn == BoardConstants.WHITE_TURN &&
-                       WhiteHeuristics.evaluateKingVulnerability(state, state.kingSquare, BoardConstants.row(state.kingSquare), BoardConstants.col(state.kingSquare)) >= 4) {
-                // King under imminent custodian capture threat; White forced to defend
-                isTacticalExtension = true;
             }
         }
 
@@ -618,7 +650,8 @@ public final class SearchEngine {
                 score = -negamax(state, nextDepth, -beta, -alpha, ply + 1, nextExt);
             } else {
                 // Principal Variation Search with Late Move Reductions (LMR)
-                boolean doLMR = useLMR && i >= 3 && depth >= 3 && !isTacticalExtension && !kingThreatenedAtEntry && isQuiet;
+                boolean doLMR = useLMR && i >= 3 && depth >= 3 && !isTacticalExtension
+                        && !kingThreatenedAtEntry && isQuiet;
                 if (doLMR) {
                     int r = (int) (0.75 + Math.log(depth) * Math.log(i) / 2.25);
                     r = Math.max(1, Math.min(depth - 2, r));

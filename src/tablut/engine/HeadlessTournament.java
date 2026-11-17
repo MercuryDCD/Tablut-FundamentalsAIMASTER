@@ -57,6 +57,8 @@ public final class HeadlessTournament {
         public int draws;
         public int winsWhite;
         public int winsBlack;
+        public int winsAWhite;
+        public int winsABlack;
         public double scoreA;
         public double scoreB;
         public double winrateA;
@@ -66,8 +68,8 @@ public final class HeadlessTournament {
         public String toJson() {
             return String.format(
                     java.util.Locale.US,
-                    "{\"games\":%d,\"winsA\":%d,\"winsB\":%d,\"draws\":%d,\"scoreA\":%.1f,\"scoreB\":%.1f,\"winrateA\":%.4f,\"winsWhite\":%d,\"winsBlack\":%d,\"timeMs\":%d,\"gamesPerSec\":%.2f}",
-                    gamesPlayed, winsA, winsB, draws, scoreA, scoreB, winrateA, winsWhite, winsBlack, totalTimeMs, gamesPerSec
+                    "{\"games\":%d,\"winsA\":%d,\"winsB\":%d,\"draws\":%d,\"winsAWhite\":%d,\"winsABlack\":%d,\"scoreA\":%.1f,\"scoreB\":%.1f,\"winrateA\":%.4f,\"winsWhite\":%d,\"winsBlack\":%d,\"timeMs\":%d,\"gamesPerSec\":%.2f}",
+                    gamesPlayed, winsA, winsB, draws, winsAWhite, winsABlack, scoreA, scoreB, winrateA, winsWhite, winsBlack, totalTimeMs, gamesPerSec
             );
         }
 
@@ -75,9 +77,9 @@ public final class HeadlessTournament {
         public String toString() {
             return String.format(
                     java.util.Locale.US,
-                    "Games: %d | A Wins: %d (%.1f%%) | B Wins: %d (%.1f%%) | Draws: %d | Score A: %.1f | Winrate A: %.2f%% | Speed: %.1f games/s (%d ms)",
-                    gamesPlayed, winsA, (winsA * 100.0 / gamesPlayed), winsB, (winsB * 100.0 / gamesPlayed),
-                    draws, scoreA, winrateA * 100.0, gamesPerSec, totalTimeMs);
+                    "Games: %d | A Wins: %d (%.1f%% | W:%d B:%d) | B Wins: %d (%.1f%%) | Draws: %d | Score A: %.1f | Winrate A: %.2f%% | Speed: %.1f games/s (%d ms)",
+                    gamesPlayed, winsA, (winsA * 100.0 / gamesPlayed), winsAWhite, winsABlack,
+                    winsB, (winsB * 100.0 / gamesPlayed), draws, scoreA, winrateA * 100.0, gamesPerSec, totalTimeMs);
         }
     }
 
@@ -98,7 +100,7 @@ public final class HeadlessTournament {
     public static MatchResult playSingleMatch(HeuristicWeights whiteWeights, HeuristicWeights blackWeights,
                                               boolean aIsWhite, int searchDepth, int openingRandomPlies,
                                               int maxPlies, long seed) {
-        return playSingleMatch(whiteWeights, blackWeights, aIsWhite, searchDepth, 60000, openingRandomPlies, maxPlies, seed);
+        return playSingleMatch(whiteWeights, blackWeights, aIsWhite, searchDepth, 60000, 0, openingRandomPlies, maxPlies, seed);
     }
 
     /**
@@ -107,22 +109,37 @@ public final class HeadlessTournament {
     public static MatchResult playSingleMatch(HeuristicWeights whiteWeights, HeuristicWeights blackWeights,
                                               boolean aIsWhite, int searchDepth, int timeoutMs,
                                               int openingRandomPlies, int maxPlies, long seed) {
+        return playSingleMatch(whiteWeights, blackWeights, aIsWhite, searchDepth, timeoutMs, 0, openingRandomPlies, maxPlies, seed);
+    }
+
+    /**
+     * Executes a single game between White and Black heuristic weight configurations with opening book and random plies.
+     */
+    public static MatchResult playSingleMatch(HeuristicWeights whiteWeights, HeuristicWeights blackWeights,
+                                              boolean aIsWhite, int searchDepth, int timeoutMs,
+                                              int openingBookPlies, int openingRandomPlies, int maxPlies, long seed) {
         EngineContext ctx = THREAD_CONTEXT.get();
         FastState state = ctx.state;
         state.initInitialState();
         UndoInfo undo = ctx.undo;
         Random rng = new Random(seed);
 
+        OpeningBook gameBook = (openingBookPlies > 0) ? new OpeningBook(new Random(seed)) : null;
+        if (gameBook != null) {
+            gameBook.setGreedy(false);
+            gameBook.setEpsilon(1.0);
+        }
+
         SearchEngine whiteEngine = ctx.whiteEngine;
         whiteEngine.setHeuristicWeights(whiteWeights);
         whiteEngine.setUseOpeningBook(true);
-        whiteEngine.getTranspositionTable().newSearch();
+        whiteEngine.getTranspositionTable().clear();
         whiteEngine.getMoveOrderer().clear();
 
         SearchEngine blackEngine = ctx.blackEngine;
         blackEngine.setHeuristicWeights(blackWeights);
         blackEngine.setUseOpeningBook(true);
-        blackEngine.getTranspositionTable().newSearch();
+        blackEngine.getTranspositionTable().clear();
         blackEngine.getMoveOrderer().clear();
 
         // Preallocated move stack and repetition history
@@ -131,6 +148,7 @@ public final class HeadlessTournament {
         int historyCount = 0;
         history[historyCount++] = state.zobristHash;
 
+        int randomPliesPlayed = 0;
         int ply = 0;
         while (!state.isGameOver() && ply < maxPlies) {
             int numMoves = MoveGenerator.generateMoves(state, moves, 0);
@@ -142,18 +160,28 @@ public final class HeadlessTournament {
                 break;
             }
 
-            int selectedMove;
-            if (ply < openingRandomPlies) {
-                // Opening diversification: pick uniformly among legal moves
-                selectedMove = moves[rng.nextInt(numMoves)];
-            } else {
-                // Tactical search at target depth/time with game history repetition avoidance
-                SearchEngine currentEngine = (state.turn == BoardConstants.WHITE_TURN) ? whiteEngine : blackEngine;
-                SearchEngine.SearchResult result = currentEngine.search(state, timeoutMs, searchDepth, history, historyCount);
-                selectedMove = result.bestMove;
+            int selectedMove = Move.NULL_MOVE;
+            if (ply < openingBookPlies && gameBook != null) {
+                int bookMove = gameBook.lookupMove(state);
+                if (bookMove != Move.NULL_MOVE) {
+                    selectedMove = bookMove;
+                }
+            }
 
-                if (selectedMove == Move.NULL_MOVE) {
-                    selectedMove = moves[0];
+            if (selectedMove == Move.NULL_MOVE) {
+                if (randomPliesPlayed < openingRandomPlies) {
+                    // Opening diversification: pick uniformly among legal moves
+                    selectedMove = moves[rng.nextInt(numMoves)];
+                    randomPliesPlayed++;
+                } else {
+                    // Tactical search at target depth/time with game history repetition avoidance
+                    SearchEngine currentEngine = (state.turn == BoardConstants.WHITE_TURN) ? whiteEngine : blackEngine;
+                    SearchEngine.SearchResult result = currentEngine.search(state, timeoutMs, searchDepth, history, historyCount);
+                    selectedMove = result.bestMove;
+
+                    if (selectedMove == Move.NULL_MOVE) {
+                        selectedMove = moves[0];
+                    }
                 }
             }
 
@@ -205,6 +233,28 @@ public final class HeadlessTournament {
     public static TournamentResult runTournament(HeuristicWeights weightsA, HeuristicWeights weightsB,
                                                  int numGames, int numThreads, int searchDepth,
                                                  int timeoutMs, int openingRandomPlies, int maxPlies) {
+        return runTournament(weightsA, weightsB, numGames, numThreads, searchDepth, timeoutMs, openingRandomPlies,
+                maxPlies, ThreadLocalRandom.current().nextLong());
+    }
+
+    /**
+     * Executes a tournament of N matches in parallel using Common Random Numbers (CRN):
+     * each color-alternating pair (2k, 2k+1) shares the exact same pairSeed.
+     */
+    public static TournamentResult runTournament(HeuristicWeights weightsA, HeuristicWeights weightsB,
+                                                 int numGames, int numThreads, int searchDepth,
+                                                 int timeoutMs, int openingRandomPlies, int maxPlies, long baseSeed) {
+        return runTournament(weightsA, weightsB, numGames, numThreads, searchDepth, timeoutMs, 0, openingRandomPlies, maxPlies, baseSeed);
+    }
+
+    /**
+     * Executes a tournament of N matches in parallel using Common Random Numbers (CRN) with opening book plies:
+     * each color-alternating pair (2k, 2k+1) shares the exact same pairSeed.
+     */
+    public static TournamentResult runTournament(HeuristicWeights weightsA, HeuristicWeights weightsB,
+                                                 int numGames, int numThreads, int searchDepth,
+                                                 int timeoutMs, int openingBookPlies, int openingRandomPlies,
+                                                 int maxPlies, long baseSeed) {
         long startTimeMs = System.currentTimeMillis();
         TournamentResult result = new TournamentResult();
         result.gamesPlayed = numGames;
@@ -217,13 +267,13 @@ public final class HeadlessTournament {
             final boolean aIsWhite = (gameIndex % 2 == 0);
             final HeuristicWeights whiteWeights = aIsWhite ? weightsA : weightsB;
             final HeuristicWeights blackWeights = aIsWhite ? weightsB : weightsA;
-            final long seed = ThreadLocalRandom.current().nextLong() ^ (gameIndex * 31337L);
+            final long pairSeed = baseSeed ^ ((gameIndex / 2) * 31337L);
 
             futures.add(pool.submit(new Callable<MatchResult>() {
                 @Override
                 public MatchResult call() {
                     return playSingleMatch(whiteWeights, blackWeights, aIsWhite,
-                            searchDepth, timeoutMs, openingRandomPlies, maxPlies, seed);
+                            searchDepth, timeoutMs, openingBookPlies, openingRandomPlies, maxPlies, pairSeed);
                 }
             }));
         }
@@ -237,6 +287,7 @@ public final class HeadlessTournament {
                     result.winsWhite++;
                     if (m.aIsWhite) {
                         result.winsA++;
+                        result.winsAWhite++;
                     } else {
                         result.winsB++;
                     }
@@ -244,6 +295,7 @@ public final class HeadlessTournament {
                     result.winsBlack++;
                     if (!m.aIsWhite) {
                         result.winsA++;
+                        result.winsABlack++;
                     } else {
                         result.winsB++;
                     }
@@ -274,8 +326,10 @@ public final class HeadlessTournament {
         boolean depthExplicit = false;
         int timeoutMs = 60000;
         int randomPlies = 2;
+        int bookPlies = 0;
         int maxPlies = 100;
         boolean quiet = false;
+        long baseSeed = ThreadLocalRandom.current().nextLong();
 
         HeuristicWeights weightsA = new HeuristicWeights();
         HeuristicWeights weightsB = new HeuristicWeights();
@@ -301,6 +355,9 @@ public final class HeadlessTournament {
                 case "--opening-random-plies":
                     randomPlies = Integer.parseInt(args[++i]);
                     break;
+                case "--opening-book-plies":
+                    bookPlies = Integer.parseInt(args[++i]);
+                    break;
                 case "--max-plies":
                     maxPlies = Integer.parseInt(args[++i]);
                     break;
@@ -312,6 +369,9 @@ public final class HeadlessTournament {
                     break;
                 case "--quiet":
                     quiet = true;
+                    break;
+                case "--seed":
+                    baseSeed = Long.parseLong(args[++i]);
                     break;
                 default:
                     System.err.println("Unknown argument: " + args[i]);
@@ -325,11 +385,11 @@ public final class HeadlessTournament {
         }
 
         if (!quiet) {
-            System.out.printf("Starting Headless Tournament | Games: %d | Threads: %d | Depth: %d | Timeout: %d ms | Random Plies: %d\n",
-                    games, threads, depth, timeoutMs, randomPlies);
+            System.out.printf("Starting Headless Tournament | Games: %d | Threads: %d | Depth: %d | Timeout: %d ms | Book Plies: %d | Random Plies: %d\n",
+                    games, threads, depth, timeoutMs, bookPlies, randomPlies);
         }
 
-        TournamentResult res = runTournament(weightsA, weightsB, games, threads, depth, timeoutMs, randomPlies, maxPlies);
+        TournamentResult res = runTournament(weightsA, weightsB, games, threads, depth, timeoutMs, bookPlies, randomPlies, maxPlies, baseSeed);
 
         if (quiet) {
             System.out.println(res.toJson());

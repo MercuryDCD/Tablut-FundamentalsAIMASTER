@@ -2,6 +2,7 @@ param(
     [int]$Games = 10,
     [int]$Timeout = 60,
     [int]$MaxPlies = 80,
+    [int]$MaxMinutes = 0,
     [ValidateSet("negamax", "mcts")]
     [string]$LucaAlgo = "negamax",
     [string]$LucaWeights = "",
@@ -32,11 +33,14 @@ $LucaBin = Join-Path $BaseDir "team\luca\Tablut\bin"
 $LucaLib = Join-Path $BaseDir "team\luca\Tablut\lib\*"
 $LucaCp = "$LucaBin;$LucaLib"
 
-# Resolve Luca weights: defaults to latest registered distilled NNUE weights (t1500000.nnue, commit b7f2d84)
+# Resolve Luca weights: defaults to latest registered NNUE weights (trained_v6.nnue, commit 72aebd6)
 if ([string]::IsNullOrWhiteSpace($LucaWeights)) {
+    $candV6 = Join-Path $BaseDir "team\luca\Tablut\pesi_nnue\trained_v6.nnue"
     $candNnue = Join-Path $BaseDir "team\luca\Tablut\pesi_nnue\t1500000.nnue"
     $candCnn = Join-Path $BaseDir "team\luca\Tablut\pesi_v4\cnn_t1500000_v4.txt"
-    if (Test-Path $candNnue) {
+    if (Test-Path $candV6) {
+        $LucaWeights = $candV6
+    } elseif (Test-Path $candNnue) {
         $LucaWeights = $candNnue
     } elseif (Test-Path $candCnn) {
         $LucaWeights = $candCnn
@@ -116,9 +120,14 @@ $headerText = "=== TOURNAMENT STARTED $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') 
 $headerText | Out-File -FilePath $SummaryFile -Encoding utf8 -Append
 
 $results = @()
+$tournamentWatch = [System.Diagnostics.Stopwatch]::StartNew()
 
 try {
     for ($g = 1; $g -le $Games; $g++) {
+        if ($MaxMinutes -gt 0 -and $tournamentWatch.Elapsed.TotalMinutes -ge $MaxMinutes) {
+            Write-Host "`n>>> Time budget of ${MaxMinutes}m reached ($([math]::Round($tournamentWatch.Elapsed.TotalMinutes, 1))m elapsed). Stopping tournament cleanly." -ForegroundColor Cyan
+            break
+        }
         $dajeRole = if ($g % 2 -eq 1) { "WHITE" } else { "BLACK" }
         $lucaRole = if ($dajeRole -eq "WHITE") { "BLACK" } else { "WHITE" }
 

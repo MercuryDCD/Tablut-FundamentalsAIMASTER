@@ -20,6 +20,29 @@ public final class HeuristicEvaluation {
     public static final int DRAW_SCORE = 0;
 
     /**
+     * Computes the static baseline evaluation from White's perspective on an initial board.
+     * Used to zero-center draw evaluation and contempt so that draws are evaluated relative
+     * to the game's intrinsic starting evaluation bias rather than an absolute zero.
+     */
+    public static int computeInitialWhiteBias(HeuristicWeights weights) {
+        return evaluateFromWhitePerspective(new FastState(), weights);
+    }
+
+    /**
+     * Evaluates a draw relative to state.turn centered at whiteBaselineOffset with
+     * dynamic material-aware contempt.
+     */
+    public static int evaluateDraw(FastState state, int whiteBaselineOffset) {
+        int materialBalance = (state.whiteCount * 2) - state.blackCount;
+        int whiteContempt = materialBalance * 50;
+        if (whiteContempt > 300) whiteContempt = 300;
+        if (whiteContempt < -300) whiteContempt = -300;
+
+        int drawWhite = whiteBaselineOffset - whiteContempt;
+        return (state.turn == BoardConstants.WHITE_TURN) ? drawWhite : -drawWhite;
+    }
+
+    /**
      * Evaluates a draw relative to state.turn using a dynamic material-aware contempt factor.
      * Material advantage creates contempt: White with a material edge dislikes draws (negative score),
      * while White with a material deficit welcomes draws (positive score).

@@ -190,6 +190,7 @@ public final class SearchEngineTest {
 
         SearchEngine baseline = new SearchEngine();
         baseline.setUseOpeningBook(false);
+        baseline.setUseHeuristicEvaluation(false);
         SearchEngine.SearchResult baseRes = baseline.search(state, 500, 2);
         int topMove = baseRes.bestMove;
 
@@ -206,6 +207,7 @@ public final class SearchEngineTest {
         long[] history = new long[] { repHash };
         SearchEngine engine = new SearchEngine();
         engine.setUseOpeningBook(false);
+        engine.setUseHeuristicEvaluation(false);
         SearchEngine.SearchResult res = engine.search(state, 500, 2, history, 1);
 
         if (res.bestMove == topMove) {
@@ -279,7 +281,8 @@ public final class SearchEngineTest {
         if (res.bestMove != drawMove) {
             throw new AssertionError("Engine failed to pick drawing move " + Move.toUci(drawMove) + ", picked " + Move.toUci(res.bestMove) + " with score " + res.bestScore);
         }
-        int expectedScore = engine.isUseContempt() ? 300 : 0;
+        int whiteBias = HeuristicEvaluation.computeInitialWhiteBias(engine.getHeuristicWeights());
+        int expectedScore = engine.isUseContempt() ? (whiteBias + 300) : whiteBias;
         if (res.bestScore != expectedScore) {
             throw new AssertionError("Expected draw score " + expectedScore + ", but got: " + res.bestScore);
         }

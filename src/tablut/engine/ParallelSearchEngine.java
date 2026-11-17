@@ -53,6 +53,7 @@ public final class ParallelSearchEngine implements AutoCloseable {
     private final TranspositionTable sharedTt;
     private final OpeningBook openingBook;
     private HeuristicWeights weights = new HeuristicWeights();
+    private int whiteBaselineOffset = HeuristicEvaluation.computeInitialWhiteBias(this.weights);
 
     // Feature toggles
     private boolean useOpeningBook = true;
@@ -259,8 +260,11 @@ public final class ParallelSearchEngine implements AutoCloseable {
         if (currentIsWin) {
             return false;
         }
-        if (currentScore <= -WIN_THRESHOLD && candidateScore > currentScore) {
-            return true;
+        if (currentScore <= -WIN_THRESHOLD) {
+            if (candidateScore <= -WIN_THRESHOLD) {
+                return candidateScore > currentScore;
+            }
+            return candidateDepth >= currentDepth;
         }
         if (candidateDepth > currentDepth && candidateScore > -WIN_THRESHOLD) {
             return true;
@@ -323,6 +327,8 @@ public final class ParallelSearchEngine implements AutoCloseable {
             moveOrderer.prepareNextSearch();
             quiescenceSearch.setHeuristicWeights(weights);
             quiescenceSearch.setUseHeuristicEvaluation(useHeuristicEvaluation);
+            quiescenceSearch.setUseContempt(useContempt);
+            quiescenceSearch.prepareSearch(coordinator.hardDeadlineMs, coordinator);
 
             System.arraycopy(baseRootMoves, 0, rootMoves, 0, numRootMoves);
 
@@ -337,7 +343,7 @@ public final class ParallelSearchEngine implements AutoCloseable {
                 long elapsedSoFar = depthStartTime - startTimeMs;
 
                 // Predictive Soft Cutoff with dynamic effective branching
-                if (depth > 1) {
+                if (depth > 1 && elapsedSoFar >= (long) (coordinator.allocatedTimeMs * 0.45)) {
                     double projectedTime = lastDepthDuration * effectiveBranchingFactor;
                     if (elapsedSoFar + projectedTime > coordinator.allocatedTimeMs) {
                         break;
@@ -358,13 +364,16 @@ public final class ParallelSearchEngine implements AutoCloseable {
 
                 int rootTtMove = Move.NULL_MOVE;
                 if (useTranspositionTable) {
-                    int ttIdx = sharedTt.probe(rootState.zobristHash);
-                    if (ttIdx != -1) {
-                        rootTtMove = sharedTt.getBestMove(ttIdx);
+                    long ttData = sharedTt.probeRaw(rootState.zobristHash);
+                    if (ttData != 0L) {
+                        rootTtMove = TranspositionTable.unpackMove(ttData);
                     }
                 }
                 int priorBest = (bestMoveOverall != Move.NULL_MOVE) ? bestMoveOverall : rootTtMove;
-                if (useMoveOrdering) {
+                if (completedDepth > 0) {
+                    SearchEngine.sortRootByScores(rootMoves, rootMoveScores, numRootMoves);
+                    SearchEngine.orderRootMoves(rootMoves, numRootMoves, priorBest);
+                } else if (useMoveOrdering) {
                     moveOrderer.orderMoves(rootState, rootMoves, numRootMoves, priorBest, 0);
                 } else {
                     SearchEngine.orderRootMoves(rootMoves, numRootMoves, priorBest);
@@ -392,7 +401,7 @@ public final class ParallelSearchEngine implements AutoCloseable {
                             score = -negamax(rootState, depth - 1, -beta, -currentAlpha, 1, 0, nextCapturePly, coordinator);
                         } else {
                             int scoutAlpha = (bestMoveHangs && currentAlpha > alpha)
-                                    ? Math.max(alpha, currentAlpha - SearchEngine.ANTI_HANGING_TIE_TOLERANCE)
+                                    ? Math.max(alpha, currentAlpha - SearchEngine.ANTI_HANGING_TIE_TOLERANCE - 1)
                                     : currentAlpha;
                             score = -negamax(rootState, depth - 1, -scoutAlpha - 1, -scoutAlpha, 1, 0, nextCapturePly, coordinator);
                             if (score > scoutAlpha && score < beta && !coordinator.stopped) {
@@ -447,19 +456,35 @@ public final class ParallelSearchEngine implements AutoCloseable {
 
                 if (!depthInterrupted) {
                     // Root Anti-Hanging Move Tie-Breaker (Phase 13 Pillar 3)
+                    // Verify that any replacement meets >= threshold via a bound proof to prevent
+                    // unverified PVS fail-low upper bounds from stealing the move.
                     if (bestScoreThisDepth < WIN_THRESHOLD && bestMoveThisDepth != Move.NULL_MOVE) {
                         boolean topHangs = SearchEngine.leavesFriendlyPieceHanging(rootState, bestMoveThisDepth);
                         if (topHangs) {
+                            int threshold = bestScoreThisDepth - SearchEngine.ANTI_HANGING_TIE_TOLERANCE;
                             int safestMove = bestMoveThisDepth;
                             int safestScore = bestScoreThisDepth;
                             for (int i = 0; i < numRootMoves; i++) {
                                 int candidateMove = rootMoves[i];
                                 int candidateScore = rootMoveScores[i];
-                                if (candidateMove != bestMoveThisDepth && candidateScore >= bestScoreThisDepth - SearchEngine.ANTI_HANGING_TIE_TOLERANCE) {
-                                    if (!SearchEngine.leavesFriendlyPieceHanging(rootState, candidateMove)) {
-                                        if (safestMove == bestMoveThisDepth || candidateScore > safestScore) {
-                                            safestMove = candidateMove;
-                                            safestScore = candidateScore;
+                                if (candidateMove != bestMoveThisDepth && candidateScore >= threshold) {
+                                    if (safestMove == bestMoveThisDepth || candidateScore > safestScore) {
+                                        if (!SearchEngine.leavesFriendlyPieceHanging(rootState, candidateMove)) {
+                                            boolean verified = (depth == 1);
+                                            if (!verified) {
+                                                rootState.makeMove(candidateMove, undo);
+                                                int nextCap = (undo.capturedCount > 0) ? 1 : 0;
+                                                int vScore = -negamax(rootState, depth - 1, -threshold, -(threshold - 1), 1, 0, nextCap, coordinator);
+                                                rootState.unmakeMove(candidateMove, undo);
+                                                verified = (!coordinator.stopped && vScore >= threshold);
+                                                if (!verified && !coordinator.stopped) {
+                                                    rootMoveScores[i] = Math.min(rootMoveScores[i], threshold - 1);
+                                                }
+                                            }
+                                            if (verified) {
+                                                safestMove = candidateMove;
+                                                safestScore = candidateScore;
+                                            }
                                         }
                                     }
                                 }
@@ -476,10 +501,11 @@ public final class ParallelSearchEngine implements AutoCloseable {
                     completedDepth = depth;
                     long currentDepthDuration = System.currentTimeMillis() - depthStartTime;
 
-                    // Dynamic Effective Branching Calibration: clamp between 2.2 and 4.5
+                    // Dynamic Effective Branching Calibration: clamp between 2.2 and 3.5 with exponential smoothing
                     if (depth >= 3 && prevDepthDuration > 5 && currentDepthDuration > 5) {
                         double ratio = (double) currentDepthDuration / prevDepthDuration;
-                        this.effectiveBranchingFactor = Math.max(2.2, Math.min(4.5, ratio));
+                        double clamped = Math.max(2.2, Math.min(3.5, ratio));
+                        this.effectiveBranchingFactor = 0.65 * this.effectiveBranchingFactor + 0.35 * clamped;
                     }
                     prevDepthDuration = currentDepthDuration;
                     lastDepthDuration = currentDepthDuration;
@@ -534,12 +560,12 @@ public final class ParallelSearchEngine implements AutoCloseable {
 
             int ttMove = Move.NULL_MOVE;
             if (useTranspositionTable) {
-                int ttIndex = sharedTt.probe(state.zobristHash);
-                if (ttIndex != -1) {
-                    ttMove = sharedTt.getBestMove(ttIndex);
-                    if (sharedTt.getDepth(ttIndex) >= depth) {
-                        byte flag = sharedTt.getFlag(ttIndex);
-                        int ttScore = sharedTt.getScore(ttIndex, ply);
+                long ttData = sharedTt.probeRaw(state.zobristHash);
+                if (ttData != 0L) {
+                    ttMove = TranspositionTable.unpackMove(ttData);
+                    if (TranspositionTable.unpackDepth(ttData) >= depth) {
+                        byte flag = TranspositionTable.unpackFlag(ttData);
+                        int ttScore = TranspositionTable.unpackScore(ttData, ply);
                         if (flag == TranspositionTable.FLAG_EXACT) {
                             return ttScore;
                         } else if (flag == TranspositionTable.FLAG_LOWER_BOUND && ttScore >= beta) {
@@ -554,7 +580,12 @@ public final class ParallelSearchEngine implements AutoCloseable {
 
             if (depth <= 0) {
                 if (useQuiescence) {
-                    return quiescenceSearch.search(state, alpha, beta, 0, ply);
+                    int qsScore = quiescenceSearch.search(state, alpha, beta, 0, ply);
+                    if (quiescenceSearch.isStopped()) {
+                        coordinator.stopped = true;
+                        return 0;
+                    }
+                    return qsScore;
                 } else {
                     return evaluateLeaf(state);
                 }
@@ -574,18 +605,20 @@ public final class ParallelSearchEngine implements AutoCloseable {
                 moveOrderer.scoreMoves(state, moves, numMoves, ttMove, ply);
             }
 
-            // Singular Tactical Extension check (Phase 12 Pillar 5)
+            // Singular Tactical Extension check (Phase 12 Pillar 5, hardened Phase 17)
             boolean isTacticalExtension = false;
-            if (extensions < 3 && depth > 0 && ply < MAX_DEPTH - 2) {
+            if (extensions < 1 && depth > 0 && ply < MAX_DEPTH - 2) {
                 if (numMoves == 1) {
                     isTacticalExtension = true;
-                } else if (state.turn == BoardConstants.BLACK_TURN && state.kingSquare != BoardConstants.THRONE) {
-                    if (TacticalCutoffs.countKingEscapeCorridors(state, state.kingSquare) == 1) {
+                } else if (depth <= 2) {
+                    if (state.turn == BoardConstants.BLACK_TURN && state.kingSquare != BoardConstants.THRONE) {
+                        if (TacticalCutoffs.countKingEscapeCorridors(state, state.kingSquare) == 1) {
+                            isTacticalExtension = true;
+                        }
+                    } else if (state.turn == BoardConstants.WHITE_TURN &&
+                               WhiteHeuristics.evaluateKingVulnerability(state, state.kingSquare, BoardConstants.row(state.kingSquare), BoardConstants.col(state.kingSquare)) >= 4) {
                         isTacticalExtension = true;
                     }
-                } else if (state.turn == BoardConstants.WHITE_TURN &&
-                           WhiteHeuristics.evaluateKingVulnerability(state, state.kingSquare, BoardConstants.row(state.kingSquare), BoardConstants.col(state.kingSquare)) >= 4) {
-                    isTacticalExtension = true;
                 }
             }
 
@@ -617,7 +650,8 @@ public final class ParallelSearchEngine implements AutoCloseable {
                     score = -negamax(state, nextDepth, -beta, -alpha, ply + 1, nextExt, nextCapturePly, coordinator);
                 } else {
                     // Principal Variation Search with Late Move Reductions (LMR)
-                    boolean doLMR = useLMR && i >= 3 && depth >= 3 && !isTacticalExtension && !kingThreatenedAtEntry && isQuiet;
+                    boolean doLMR = useLMR && i >= 3 && depth >= 3 && !isTacticalExtension
+                            && !kingThreatenedAtEntry && isQuiet;
                     if (doLMR) {
                         int r = (int) (0.75 + Math.log(depth) * Math.log(i) / 2.25);
                         r = Math.max(1, Math.min(depth - 2, r));
@@ -744,6 +778,8 @@ public final class ParallelSearchEngine implements AutoCloseable {
             this.moveOrderer.prepareNextSearch();
             this.quiescenceSearch.setHeuristicWeights(weights);
             this.quiescenceSearch.setUseHeuristicEvaluation(useHeuristicEvaluation);
+            this.quiescenceSearch.setUseContempt(useContempt);
+            this.quiescenceSearch.prepareSearch(coordinator.hardDeadlineMs, coordinator);
         }
 
         @Override
@@ -761,12 +797,17 @@ public final class ParallelSearchEngine implements AutoCloseable {
             for (int depth = startDepth; depth <= searchLimitDepth && !coordinator.stopped; depth++) {
                 int bestSoFar = bestMoveOverall;
                 if (bestSoFar == Move.NULL_MOVE && useTranspositionTable) {
-                    int ttIdx = sharedTt.probe(rootState.zobristHash);
-                    if (ttIdx != -1) {
-                        bestSoFar = sharedTt.getBestMove(ttIdx);
+                    long ttData = sharedTt.probeRaw(rootState.zobristHash);
+                    if (ttData != 0L) {
+                        bestSoFar = TranspositionTable.unpackMove(ttData);
                     }
                 }
-                if (useMoveOrdering) {
+                if (completedDepth > 0) {
+                    SearchEngine.sortRootByScores(rootMoves, rootMoveScores, numRootMoves);
+                    if (bestSoFar != Move.NULL_MOVE) {
+                        SearchEngine.orderRootMoves(rootMoves, numRootMoves, bestSoFar);
+                    }
+                } else if (useMoveOrdering) {
                     moveOrderer.orderMoves(rootState, rootMoves, numRootMoves, bestSoFar, 0);
                     // Diversify among top candidate moves (indices 1..min(numRootMoves-1, 5)) by threadId
                     int window = Math.min(numRootMoves - 1, 5);
@@ -802,7 +843,7 @@ public final class ParallelSearchEngine implements AutoCloseable {
                         score = -negamax(rootState, depth - 1, -beta, -currentAlpha, 1, 0, nextCapturePly, coordinator);
                     } else {
                         int scoutAlpha = (bestMoveHangs && currentAlpha > alpha)
-                                ? Math.max(alpha, currentAlpha - SearchEngine.ANTI_HANGING_TIE_TOLERANCE)
+                                ? Math.max(alpha, currentAlpha - SearchEngine.ANTI_HANGING_TIE_TOLERANCE - 1)
                                 : currentAlpha;
                         score = -negamax(rootState, depth - 1, -scoutAlpha - 1, -scoutAlpha, 1, 0, nextCapturePly, coordinator);
                         if (score > scoutAlpha && score < beta && !coordinator.stopped) {
@@ -835,20 +876,34 @@ public final class ParallelSearchEngine implements AutoCloseable {
                 }
 
                 if (!depthInterrupted && bestMoveThisDepth != Move.NULL_MOVE) {
-                    // Root Anti-Hanging Move Tie-Breaker
+                    // Root Anti-Hanging Move Tie-Breaker (with fail-low bound verification)
                     if (bestScoreThisDepth < WIN_THRESHOLD) {
                         boolean topHangs = SearchEngine.leavesFriendlyPieceHanging(rootState, bestMoveThisDepth);
                         if (topHangs) {
+                            int threshold = bestScoreThisDepth - SearchEngine.ANTI_HANGING_TIE_TOLERANCE;
                             int safestMove = bestMoveThisDepth;
                             int safestScore = bestScoreThisDepth;
                             for (int i = 0; i < numRootMoves; i++) {
                                 int candidateMove = rootMoves[i];
                                 int candidateScore = rootMoveScores[i];
-                                if (candidateMove != bestMoveThisDepth && candidateScore >= bestScoreThisDepth - SearchEngine.ANTI_HANGING_TIE_TOLERANCE) {
-                                    if (!SearchEngine.leavesFriendlyPieceHanging(rootState, candidateMove)) {
-                                        if (safestMove == bestMoveThisDepth || candidateScore > safestScore) {
-                                            safestMove = candidateMove;
-                                            safestScore = candidateScore;
+                                if (candidateMove != bestMoveThisDepth && candidateScore >= threshold) {
+                                    if (safestMove == bestMoveThisDepth || candidateScore > safestScore) {
+                                        if (!SearchEngine.leavesFriendlyPieceHanging(rootState, candidateMove)) {
+                                            boolean verified = (depth == 1);
+                                            if (!verified) {
+                                                rootState.makeMove(candidateMove, undo);
+                                                int nextCap = (undo.capturedCount > 0) ? 1 : 0;
+                                                int vScore = -negamax(rootState, depth - 1, -threshold, -(threshold - 1), 1, 0, nextCap, coordinator);
+                                                rootState.unmakeMove(candidateMove, undo);
+                                                verified = (!coordinator.stopped && vScore >= threshold);
+                                                if (!verified && !coordinator.stopped) {
+                                                    rootMoveScores[i] = Math.min(rootMoveScores[i], threshold - 1);
+                                                }
+                                            }
+                                            if (verified) {
+                                                safestMove = candidateMove;
+                                                safestScore = candidateScore;
+                                            }
                                         }
                                     }
                                 }
@@ -914,12 +969,12 @@ public final class ParallelSearchEngine implements AutoCloseable {
 
             int ttMove = Move.NULL_MOVE;
             if (useTranspositionTable) {
-                int ttIndex = sharedTt.probe(state.zobristHash);
-                if (ttIndex != -1) {
-                    ttMove = sharedTt.getBestMove(ttIndex);
-                    if (sharedTt.getDepth(ttIndex) >= depth) {
-                        byte flag = sharedTt.getFlag(ttIndex);
-                        int ttScore = sharedTt.getScore(ttIndex, ply);
+                long ttData = sharedTt.probeRaw(state.zobristHash);
+                if (ttData != 0L) {
+                    ttMove = TranspositionTable.unpackMove(ttData);
+                    if (TranspositionTable.unpackDepth(ttData) >= depth) {
+                        byte flag = TranspositionTable.unpackFlag(ttData);
+                        int ttScore = TranspositionTable.unpackScore(ttData, ply);
                         if (flag == TranspositionTable.FLAG_EXACT) {
                             return ttScore;
                         } else if (flag == TranspositionTable.FLAG_LOWER_BOUND && ttScore >= beta) {
@@ -934,7 +989,12 @@ public final class ParallelSearchEngine implements AutoCloseable {
 
             if (depth <= 0) {
                 if (useQuiescence) {
-                    return quiescenceSearch.search(state, alpha, beta, 0, ply);
+                    int qsScore = quiescenceSearch.search(state, alpha, beta, 0, ply);
+                    if (quiescenceSearch.isStopped()) {
+                        coordinator.stopped = true;
+                        return 0;
+                    }
+                    return qsScore;
                 } else {
                     return evaluateLeaf(state);
                 }
@@ -954,18 +1014,20 @@ public final class ParallelSearchEngine implements AutoCloseable {
                 moveOrderer.scoreMoves(state, moves, numMoves, ttMove, ply);
             }
 
-            // Singular Tactical Extension check (Phase 12 Pillar 5)
+            // Singular Tactical Extension check (Phase 12 Pillar 5, hardened Phase 17)
             boolean isTacticalExtension = false;
-            if (extensions < 3 && depth > 0 && ply < MAX_DEPTH - 2) {
+            if (extensions < 1 && depth > 0 && ply < MAX_DEPTH - 2) {
                 if (numMoves == 1) {
                     isTacticalExtension = true;
-                } else if (state.turn == BoardConstants.BLACK_TURN && state.kingSquare != BoardConstants.THRONE) {
-                    if (TacticalCutoffs.countKingEscapeCorridors(state, state.kingSquare) == 1) {
+                } else if (depth <= 2) {
+                    if (state.turn == BoardConstants.BLACK_TURN && state.kingSquare != BoardConstants.THRONE) {
+                        if (TacticalCutoffs.countKingEscapeCorridors(state, state.kingSquare) == 1) {
+                            isTacticalExtension = true;
+                        }
+                    } else if (state.turn == BoardConstants.WHITE_TURN &&
+                               WhiteHeuristics.evaluateKingVulnerability(state, state.kingSquare, BoardConstants.row(state.kingSquare), BoardConstants.col(state.kingSquare)) >= 4) {
                         isTacticalExtension = true;
                     }
-                } else if (state.turn == BoardConstants.WHITE_TURN &&
-                           WhiteHeuristics.evaluateKingVulnerability(state, state.kingSquare, BoardConstants.row(state.kingSquare), BoardConstants.col(state.kingSquare)) >= 4) {
-                    isTacticalExtension = true;
                 }
             }
 
@@ -997,7 +1059,8 @@ public final class ParallelSearchEngine implements AutoCloseable {
                     score = -negamax(state, nextDepth, -beta, -alpha, ply + 1, nextExt, nextCapturePly, coordinator);
                 } else {
                     // Principal Variation Search with Late Move Reductions (LMR)
-                    boolean doLMR = useLMR && i >= 3 && depth >= 3 && !isTacticalExtension && !kingThreatenedAtEntry && isQuiet;
+                    boolean doLMR = useLMR && i >= 3 && depth >= 3 && !isTacticalExtension
+                            && !kingThreatenedAtEntry && isQuiet;
                     if (doLMR) {
                         int r = (int) (0.75 + Math.log(depth) * Math.log(i) / 2.25);
                         r = Math.max(1, Math.min(depth - 2, r));
@@ -1092,10 +1155,10 @@ public final class ParallelSearchEngine implements AutoCloseable {
     }
 
     private int evaluateDraw(FastState state) {
-        if (useContempt) {
-            return HeuristicEvaluation.evaluateDraw(state);
-        }
-        return 0;
+        if (!useHeuristicEvaluation) return BaselineEvaluation.DRAW_SCORE;
+        return useContempt
+                ? HeuristicEvaluation.evaluateDraw(state, whiteBaselineOffset)
+                : ((state.turn == BoardConstants.WHITE_TURN) ? whiteBaselineOffset : -whiteBaselineOffset);
     }
 
     public void setTimeSafetyRatio(double ratio) {
@@ -1137,6 +1200,7 @@ public final class ParallelSearchEngine implements AutoCloseable {
     public void setHeuristicWeights(HeuristicWeights weights) {
         if (weights != null) {
             this.weights = weights;
+            this.whiteBaselineOffset = HeuristicEvaluation.computeInitialWhiteBias(weights);
         }
     }
 

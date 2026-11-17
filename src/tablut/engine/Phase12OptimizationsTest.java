@@ -149,8 +149,9 @@ public final class Phase12OptimizationsTest {
             throw new AssertionError("Expected dispersion penalty 100 for corner pawns, got " + dispersionB);
         }
 
-        // Verify heuristic delta with weights
+        // Verify heuristic delta with weights (isolate shield & dispersion from safe-fork runway clearance)
         HeuristicWeights weights = new HeuristicWeights();
+        weights.kingSafeForkThreat = 0;
         int evalA = WhiteHeuristics.evaluate(state, weights); // corner pawns
         // Revert to shield
         Arrays.fill(state.board, BoardConstants.EMPTY);

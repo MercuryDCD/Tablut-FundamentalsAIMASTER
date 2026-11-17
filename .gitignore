@@ -28,6 +28,7 @@ garbage/
 *.tmp
 *.csv
 __AGENT_CACHE__*.txt
+checkpoint_weights.*backup*.json
 team/
 competitors/
 __pycache__/

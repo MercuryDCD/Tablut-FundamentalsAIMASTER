@@ -39,16 +39,38 @@ CHECKPOINT_FILE = PROJECT_ROOT / "checkpoint_weights.json"
 def main():
     parser = argparse.ArgumentParser(description="Automated 2-Phase Overnight SPSA Training Pipeline")
     parser.add_argument("--warmup-iters", type=int, default=300,
-                        help="Iterations for Phase 1 warm-up (default: 300, ~15 mins)")
-    parser.add_argument("--warmup-stage", type=str, default="positional",
+                        help="Iterations for Phase 1 warm-up (default: 300)")
+    parser.add_argument("--warmup-stage", type=str, default="all",
                         choices=["material", "positional", "micro", "tactical_compound", "all"],
-                        help="Stage to optimize during Phase 1 warm-up (default: positional)")
+                        help="Stage to optimize during Phase 1 warm-up (default: all)")
+    parser.add_argument("--games-phase1", type=int, default=80,
+                        help="Matches per SPSA step in Phase 1 (default: 80)")
     parser.add_argument("--skip-warmup", action="store_true",
                         help="Skip Phase 1 and jump straight to Phase 2 (all parameters at depth 4)")
+    parser.add_argument("--fresh", action="store_true",
+                        help="Start Phase 1 fresh from DEFAULT_WEIGHTS instead of resuming checkpoint_weights.json")
     parser.add_argument("--depth", type=int, default=4,
                         help="Search depth for Phase 2 global fine-tuning (default: 4)")
-    parser.add_argument("--games-phase2", type=int, default=80,
-                        help="Matches per SPSA step in Phase 2 (default: 80)")
+    parser.add_argument("--games-phase2", type=int, default=40,
+                        help="Matches per SPSA step in Phase 2 (default: 40)")
+    parser.add_argument("--max-iters-phase2", type=int, default=0,
+                        help="Maximum iterations for Phase 2 (0 = infinite anytime, default: 0)")
+    parser.add_argument("--max-plies", type=int, default=110,
+                        help="Maximum plies before draw adjudication (default: 110)")
+    parser.add_argument("--timeout-ms", type=int, default=2500,
+                        help="Move timeout in milliseconds for simulation (default: 2500)")
+    parser.add_argument("--freeze-collinear", dest="freeze_collinear", action="store_true", default=True,
+                        help="Freeze collinear features in SPSA (default: True)")
+    parser.add_argument("--no-freeze-collinear", dest="freeze_collinear", action="store_false",
+                        help="Do not freeze collinear features in SPSA")
+    parser.add_argument("--eval-interval", type=int, default=50,
+                        help="CRN validation gate interval in iterations (default: 50)")
+    parser.add_argument("--eval-games", type=int, default=80,
+                        help="CRN validation gate games (default: 80)")
+    parser.add_argument("--opening-book-plies", type=int, default=4,
+                        help="Opening book plies for HeadlessTournament simulation (default: 4)")
+    parser.add_argument("--opening-random-plies", type=int, default=2,
+                        help="Opening random plies for HeadlessTournament simulation (default: 2)")
     parser.add_argument("--threads", type=int, default=os.cpu_count() or 8,
                         help="Parallel worker threads for simulation (default: all vCPUs)")
     parser.add_argument("--auto-apply", action="store_true",
@@ -62,33 +84,51 @@ def main():
     print("=" * 80)
     print(f"  Worker Threads    : {args.threads}")
     print(f"  Checkpoint File   : {CHECKPOINT_FILE}")
-    print(f"  Phase 1 (Warmup)  : {'SKIPPED' if args.skip_warmup else f'{args.warmup_iters} iters @ Depth 3 ({args.warmup_stage} stage)'}")
-    print(f"  Phase 2 (Global)  : Infinite Anytime @ Depth {args.depth} ({args.games_phase2} games/step, all 24 params)")
+    print(f"  Max Plies / MoveTO: {args.max_plies} plies / {args.timeout_ms} ms")
+    print(f"  Freeze Collinear  : {'Enabled' if args.freeze_collinear else 'Disabled'}")
+    print(f"  Phase 1 (Warmup)  : {'SKIPPED' if args.skip_warmup else f'{args.warmup_iters} iters @ Depth 3 ({args.warmup_stage} stage, {args.games_phase1} g/step, fresh={args.fresh})'}")
+    p2_limit = "Infinite Anytime" if args.max_iters_phase2 <= 0 else f"{args.max_iters_phase2} iters"
+    print(f"  Phase 2 (Global)  : {p2_limit} @ Depth {args.depth} ({args.games_phase2} games/step)")
     print(f"  Auto-Apply Final  : {'Enabled' if args.auto_apply else 'Disabled'}")
     print("=" * 80)
+
+    common_flags = [
+        "--max-plies", str(args.max_plies),
+        "--timeout-ms", str(args.timeout_ms),
+        "--eval-interval", str(args.eval_interval),
+        "--eval-games", str(args.eval_games),
+        "--threads", str(args.threads),
+        "--opening-book-plies", str(args.opening_book_plies),
+        "--opening-random-plies", str(args.opening_random_plies),
+    ]
+    common_flags.append("--freeze-collinear" if args.freeze_collinear else "--no-freeze-collinear")
 
     # Phase 1 Command
     cmd_phase1 = [
         sys.executable, str(SPSA_SCRIPT),
-        "--resume",
         "--warm-restart",
         "--stage", args.warmup_stage,
         "--depth", "3",
-        "--games", "60",
-        "--threads", str(args.threads),
-        "--max-iterations", str(args.warmup_iters)
+        "--games", str(args.games_phase1),
+        "--max-iterations", str(args.warmup_iters),
+        *common_flags
     ]
+    if not args.fresh:
+        cmd_phase1.append("--resume")
 
-    # Phase 2 Command
+    # Phase 2 Command (always resumes Phase 1's checkpoint unless warmup skipped & fresh)
     cmd_phase2 = [
         sys.executable, str(SPSA_SCRIPT),
-        "--resume",
         "--warm-restart",
         "--stage", "all",
         "--depth", str(args.depth),
         "--games", str(args.games_phase2),
-        "--threads", str(args.threads)
+        *common_flags
     ]
+    if not (args.skip_warmup and args.fresh):
+        cmd_phase2.append("--resume")
+    if args.max_iters_phase2 > 0:
+        cmd_phase2.extend(["--max-iterations", str(args.max_iters_phase2)])
     if args.auto_apply:
         cmd_phase2.append("--auto-apply")
 
@@ -121,7 +161,7 @@ def main():
     if not args.skip_warmup:
         print("\n" + "#" * 80)
         print("  STARTING PHASE 1: WARM-UP & ACCLIMATIZATION OF NEW WEIGHTS")
-        print(f"  Stage: {args.warmup_stage} | Depth: 3 | Iters: {args.warmup_iters} | N: 60")
+        print(f"  Stage: {args.warmup_stage} | Depth: 3 | Iters: {args.warmup_iters} | N: {args.games_phase1}")
         print("#" * 80 + "\n")
         start_t1 = time.time()
         active_proc = subprocess.Popen(cmd_phase1)

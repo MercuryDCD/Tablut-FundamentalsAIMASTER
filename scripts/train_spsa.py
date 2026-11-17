@@ -58,57 +58,63 @@ WEIGHT_NAMES = [
 ]
 
 DEFAULT_WEIGHTS = [
-    115,    # whitePiece
-    125,    # blackCaptured
-    31,     # kingDistance
-    1412,   # kingSingleEscape
-    18269,  # kingDoubleEscape
-    37,     # diamondOccupancy
-    12,     # kingMobility
-    142,    # kingVulnerabilityPenalty
-    136,    # blackPiece
-    176,    # whiteCaptured
-    70,     # rhombusBlockade
-    77,     # campFrontPreserved
+    320,    # whitePiece (Phase 16/17 Champion Anchor)
+    107,    # blackCaptured (FROZEN: collinear with blackPiece)
+    35,     # kingDistance
+    1333,   # kingSingleEscape
+    18590,  # kingDoubleEscape
+    39,     # diamondOccupancy
+    15,     # kingMobility
+    79,     # kingVulnerabilityPenalty
+    99,     # blackPiece
+    198,    # whiteCaptured (FROZEN: collinear with whitePiece)
+    55,     # rhombusBlockade
+    69,     # campFrontPreserved
     50,     # kingSurroundedThrone
-    43,     # kingContainment
-    8,      # blackMobility
-    18,     # blackConnectedChains
-    16,     # kingOpenFieldContainment
-    24,     # kingDefenderShieldCohesion
-    14,     # whitePawnDispersionPenalty
-    35,     # campPinchTraps
-    28,     # throneAnvilThreats
-    2800,   # kingSafeForkThreat
-    400,    # kingThroneAbandonPenalty
-    45      # campPerimeterIntegrityPenalty
+    39,     # kingContainment (FROZEN: collinear with kingDistance)
+    9,      # blackMobility
+    13,     # blackConnectedChains
+    11,     # kingOpenFieldContainment
+    16,     # kingDefenderShieldCohesion
+    7,      # whitePawnDispersionPenalty
+    37,     # campPinchTraps
+    30,     # throneAnvilThreats
+    350,    # kingSafeForkThreat
+    450,    # kingThroneAbandonPenalty
+    31      # campPerimeterIntegrityPenalty
 ]
 
+# Exact linear dependencies verified via SVD (|r| = 1.000):
+#   1: blackCaptured    <-> 8: blackPiece
+#   9: whiteCaptured    <-> 0: whitePiece
+#  13: kingContainment  <-> 2: kingDistance
+COLLINEAR_INDICES = {1, 9, 13}
+
 BOUNDS = [
-    (40, 400),      # whitePiece
+    (220, 400),     # whitePiece
     (20, 250),      # blackCaptured
-    (5, 120),       # kingDistance
-    (400, 4000),    # kingSingleEscape
-    (8000, 30000),  # kingDoubleEscape
-    (10, 250),      # diamondOccupancy
-    (2, 80),        # kingMobility
-    (40, 600),      # kingVulnerabilityPenalty
-    (20, 250),      # blackPiece
-    (50, 500),      # whiteCaptured
-    (20, 300),      # rhombusBlockade
-    (10, 200),      # campFrontPreserved
-    (50, 800),      # kingSurroundedThrone
-    (5, 150),       # kingContainment
-    (1, 30),        # blackMobility
-    (0, 100),       # blackConnectedChains
-    (0, 80),        # kingOpenFieldContainment
-    (5, 100),       # kingDefenderShieldCohesion
-    (2, 80),        # whitePawnDispersionPenalty
-    (5, 150),       # campPinchTraps
-    (5, 150),       # throneAnvilThreats
-    (500, 8000),    # kingSafeForkThreat
-    (100, 1500),    # kingThroneAbandonPenalty
-    (5, 200)        # campPerimeterIntegrityPenalty
+    (10, 100),      # kingDistance
+    (600, 3500),    # kingSingleEscape
+    (10000, 30000), # kingDoubleEscape
+    (20, 120),      # diamondOccupancy
+    (4, 60),        # kingMobility
+    (40, 250),      # kingVulnerabilityPenalty
+    (50, 200),      # blackPiece
+    (80, 450),      # whiteCaptured
+    (35, 160),      # rhombusBlockade
+    (25, 180),      # campFrontPreserved
+    (25, 250),      # kingSurroundedThrone
+    (10, 120),      # kingContainment
+    (2, 25),        # blackMobility
+    (0, 60),        # blackConnectedChains
+    (2, 60),        # kingOpenFieldContainment
+    (5, 80),        # kingDefenderShieldCohesion
+    (2, 30),        # whitePawnDispersionPenalty
+    (10, 120),      # campPinchTraps
+    (10, 120),      # throneAnvilThreats
+    (200, 3500),    # kingSafeForkThreat
+    (150, 1200),    # kingThroneAbandonPenalty
+    (15, 65)        # campPerimeterIntegrityPenalty
 ]
 
 # Scale factor for exploration step Delta per weight index
@@ -179,7 +185,7 @@ def clamp_weights(w_vec):
 def weights_to_csv(w_vec):
     return ",".join(str(int(round(x))) for x in w_vec)
 
-def save_checkpoint(iteration, total_games, active_w, best_w, winrate_plus, depth, threads, elapsed_sec, stage="all", cycle=1):
+def save_checkpoint(iteration, total_games, active_w, best_w, winrate_plus, depth, threads, elapsed_sec, stage="all", cycle=1, ema_w=None):
     checkpoint_data = {
         "iteration": iteration,
         "total_games": total_games,
@@ -195,6 +201,9 @@ def save_checkpoint(iteration, total_games, active_w, best_w, winrate_plus, dept
         "best_weights_dict": {WEIGHT_NAMES[i]: int(round(best_w[i])) for i in range(len(WEIGHT_NAMES))},
         "last_winrate_plus": winrate_plus
     }
+    if ema_w is not None:
+        checkpoint_data["ema_weights"] = [int(round(x)) for x in ema_w]
+        checkpoint_data["ema_weights_dict"] = {WEIGHT_NAMES[i]: int(round(ema_w[i])) for i in range(len(WEIGHT_NAMES))}
     tmp_path = CHECKPOINT_FILE.with_suffix(".tmp")
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(checkpoint_data, f, indent=2)
@@ -210,7 +219,7 @@ def load_checkpoint():
         print(f"Warning: Failed to load checkpoint ({e}). Starting fresh.")
         return None
 
-def run_headless_match(weights_a_csv, weights_b_csv, games, threads, depth, classpath, timeout_ms=2500, max_plies=60):
+def run_headless_match(weights_a_csv, weights_b_csv, games, threads, depth, classpath, timeout_ms=2500, max_plies=110, seed=None, opening_book_plies=4, opening_random_plies=2):
     cmd = [
         "java",
         "-cp", classpath,
@@ -222,9 +231,12 @@ def run_headless_match(weights_a_csv, weights_b_csv, games, threads, depth, clas
         "--max-plies", str(max_plies),
         "--weightsA", weights_a_csv,
         "--weightsB", weights_b_csv,
-        "--opening-random-plies", "2",
+        "--opening-book-plies", str(opening_book_plies),
+        "--opening-random-plies", str(opening_random_plies),
         "--quiet"
     ]
+    if seed is not None:
+        cmd.extend(["--seed", str(seed)])
     try:
         # Generous timeout guard scaling with game count (prevents aborting deep evaluations)
         match_timeout = max(1200, games * 30)
@@ -261,8 +273,20 @@ def main():
                         help="Reset SPSA learning rate decay (a_k, c_k) to step 1 for the current session (recommended when resuming a new stage or changing depth)")
     parser.add_argument("--timeout-ms", type=int, default=2500,
                         help="Move timeout in milliseconds for simulation (default: 2500)")
-    parser.add_argument("--max-plies", type=int, default=60,
-                        help="Maximum plies before draw adjudication in simulation (default: 60)")
+    parser.add_argument("--max-plies", type=int, default=110,
+                        help="Maximum plies before draw adjudication in simulation (default: 110)")
+    parser.add_argument("--freeze-collinear", dest="freeze_collinear", action="store_true", default=True,
+                        help="Freeze linearly collinear features (blackCaptured, whiteCaptured, kingContainment) (default: True)")
+    parser.add_argument("--no-freeze-collinear", dest="freeze_collinear", action="store_false",
+                        help="Allow SPSA to perturb linearly collinear features")
+    parser.add_argument("--eval-interval", type=int, default=50,
+                        help="Run CRN validation gate every N iterations to promote EMA weights (0 = disabled, default: 50)")
+    parser.add_argument("--eval-games", type=int, default=80,
+                        help="Number of CRN games for periodic best-weight validation gate (default: 80)")
+    parser.add_argument("--opening-book-plies", type=int, default=4,
+                        help="Opening book plies for HeadlessTournament simulation (default: 4)")
+    parser.add_argument("--opening-random-plies", type=int, default=2,
+                        help="Opening random plies for HeadlessTournament simulation (default: 2)")
     parser.add_argument("--auto-apply", action="store_true",
                         help="Automatically apply best weights and recompile engine binaries upon stopping/completion")
     args = parser.parse_args()
@@ -278,6 +302,7 @@ def main():
     # State initialization
     active_w = list(DEFAULT_WEIGHTS)
     best_w = list(DEFAULT_WEIGHTS)
+    ema_w = list(DEFAULT_WEIGHTS)
     start_iteration = 0
     total_games = 0
     total_time_start = time.time()
@@ -304,11 +329,26 @@ def main():
                     if name in ckpt["best_weights_dict"]:
                         best_w[i] = float(ckpt["best_weights_dict"][name])
 
+            ema_w = list(active_w)
+            if "ema_weights" in ckpt:
+                loaded_ema = [float(x) for x in ckpt.get("ema_weights", [])]
+                if len(loaded_ema) == len(DEFAULT_WEIGHTS):
+                    ema_w = loaded_ema
+            if "ema_weights_dict" in ckpt:
+                for i, name in enumerate(WEIGHT_NAMES):
+                    if name in ckpt["ema_weights_dict"]:
+                        ema_w[i] = float(ckpt["ema_weights_dict"][name])
+
             start_iteration = ckpt.get("iteration", 0)
             total_games = ckpt.get("total_games", 0)
             prev_stage = ckpt.get("stage", "all")
             resumed_cycle = ckpt.get("cycle", 1)
             print(f"[*] Resumed from checkpoint (Previous stage: {prev_stage}, Cycle: {resumed_cycle}): Iteration {start_iteration}, {total_games} total games.")
+    elif CHECKPOINT_FILE.exists():
+        # Preserve any prior checkpoint safely without touching phase14 backup
+        pre_backup = Path("checkpoint_weights.pre_session_backup.json")
+        pre_backup.write_bytes(CHECKPOINT_FILE.read_bytes())
+        print(f"[*] Fresh SPSA run: backed up existing checkpoint to {pre_backup.name}")
 
     # Graceful SIGINT handler
     interrupted = False
@@ -330,8 +370,10 @@ def main():
         print(f"  Mode           : Single Stage [{args.stage}]")
         print(f"  Stage Info     : {STAGES[args.stage]['name']}")
     print(f"  Worker Threads : {args.threads}")
-    print(f"  Search Depth   : Depth {args.depth} + Quiescence Search")
-    print(f"  Games / Step   : {args.games} (Strict Color-Balanced Alternation)")
+    print(f"  Search Depth   : Depth {args.depth} + Quiescence Search (maxPlies={args.max_plies})")
+    print(f"  Games / Step   : {args.games} (CRN Paired Color-Balanced Alternation)")
+    print(f"  Freeze Collinear: {'Enabled (blackCaptured, whiteCaptured, kingContainment)' if args.freeze_collinear else 'Disabled'}")
+    print(f"  Eval Gate      : Every {args.eval_interval} iters ({args.eval_games} CRN games)" if args.eval_interval > 0 else "  Eval Gate      : Disabled")
     print(f"  Start Iteration: {start_iteration + 1}")
     print(f"  Checkpoint File: {CHECKPOINT_FILE.resolve()}")
     print(f"  Auto-Apply     : {'Enabled (will patch HeuristicWeights.java & recompile)' if args.auto_apply else 'Disabled'}")
@@ -344,10 +386,41 @@ def main():
     A = 15.0
     a = args.learning_rate
     c = args.perturbation
+    ema_alpha = 0.05
 
     current_stage = None
     current_cycle = resumed_cycle
     active_indices = set()
+
+    def run_validation_gate(candidate_w, incumbent_w, iter_num):
+        nonlocal total_games
+        cand_clamped = clamp_weights(candidate_w)
+        inc_clamped = clamp_weights(incumbent_w)
+        gate_seed = 900000 + iter_num * 101
+        gate_res = run_headless_match(
+            weights_to_csv(cand_clamped),
+            weights_to_csv(inc_clamped),
+            args.eval_games,
+            args.threads,
+            args.depth,
+            classpath,
+            timeout_ms=args.timeout_ms,
+            max_plies=args.max_plies,
+            seed=gate_seed,
+            opening_book_plies=args.opening_book_plies,
+            opening_random_plies=args.opening_random_plies
+        )
+        if gate_res is None:
+            return False, incumbent_w
+        total_games += args.eval_games
+        wr = gate_res.get("winrateA", 0.5)
+        w_w = gate_res.get("winsAWhite", 0)
+        b_w = gate_res.get("winsABlack", 0)
+        promoted = wr >= 0.52
+        tag = "PROMOTED" if promoted else "KEPT INCUMBENT"
+        print(f"  [GATE @ Iter {iter_num:4d}] EMA vs Best ({args.eval_games} CRN games): "
+              f"WinRate={wr*100:5.1f}% (winsAWhite={w_w}, winsABlack={b_w}) -> {tag}")
+        return promoted, (cand_clamped if promoted else incumbent_w)
 
     iteration = start_iteration
     while not interrupted:
@@ -367,6 +440,8 @@ def main():
             current_stage = stage_key
             stage_info = STAGES[current_stage]
             active_indices = set(stage_info["indices"])
+            if args.freeze_collinear:
+                active_indices -= COLLINEAR_INDICES
             print("\n" + "=" * 80)
             print(f"  >>> STAGE TRANSITION: Cycle {current_cycle} | {stage_info['name']}")
             print(f"      Description: {stage_info['description']}")
@@ -393,14 +468,19 @@ def main():
         csv_plus = weights_to_csv(w_plus_clamped)
         csv_minus = weights_to_csv(w_minus_clamped)
 
-        # 4. Run tournament: w+ vs w-
+        # 4. Run tournament: w+ vs w- using shared CRN seed for paired openings
+        iter_seed = random.randint(1, 2_000_000_000)
         match_res = run_headless_match(csv_plus, csv_minus, args.games, args.threads, args.depth, classpath,
-                                       timeout_ms=args.timeout_ms, max_plies=args.max_plies)
+                                       timeout_ms=args.timeout_ms, max_plies=args.max_plies, seed=iter_seed,
+                                       opening_book_plies=args.opening_book_plies,
+                                       opening_random_plies=args.opening_random_plies)
         if match_res is None or interrupted:
             break
 
         y_plus = match_res.get("winrateA", 0.5)
         y_minus = 1.0 - y_plus
+        wins_a_white = match_res.get("winsAWhite", 0)
+        wins_a_black = match_res.get("winsABlack", 0)
         total_games += args.games
 
         # 5. Gradient estimation: g_k = (y+ - y-) / (2 * c_k * Delta)
@@ -412,19 +492,25 @@ def main():
                 active_w[i] += a_k * g_i * (SCALES[i] ** 2)
         active_w = clamp_weights(active_w)
 
-        # Track best weights if winrate of candidate was strong
-        if y_plus >= 0.55:
-            best_w = list(w_plus_clamped)
-        elif y_plus <= 0.45:
-            best_w = list(w_minus_clamped)
+        # Update exponential moving average of iterates (Polyak-Ruppert smoothing)
+        for i in range(len(ema_w)):
+            if i in active_indices:
+                ema_w[i] = (1.0 - ema_alpha) * ema_w[i] + ema_alpha * active_w[i]
+            else:
+                ema_w[i] = active_w[i]
+
+        # Periodic CRN validation gate (replaces noisy single-step best_w tracking)
+        session_iter = iteration - start_iteration
+        if args.eval_interval > 0 and (session_iter % args.eval_interval == 0):
+            _, best_w = run_validation_gate(ema_w, best_w, iteration)
 
         iter_elapsed = time.time() - iter_start_time
         total_elapsed = time.time() - total_time_start
-        speed = args.games / iter_elapsed
+        speed = args.games / max(iter_elapsed, 0.001)
 
         # 6. Atomic Checkpoint
         save_checkpoint(iteration, total_games, active_w, best_w, y_plus, args.depth, args.threads,
-                        total_elapsed, stage=current_stage, cycle=current_cycle)
+                        total_elapsed, stage=current_stage, cycle=current_cycle, ema_w=ema_w)
 
         # 7. Real-time telemetry log
         diff_str = []
@@ -433,22 +519,28 @@ def main():
             sign = "+" if diff >= 0 else ""
             diff_str.append(f"{WEIGHT_NAMES[i]}={int(round(active_w[i]))}({sign}{diff})")
 
-        print(f"[Iter {iteration:4d} | C{current_cycle}:{current_stage:<10}] Games: {total_games:6d} | WinRate(+): {y_plus*100:5.1f}% | "
+        print(f"[Iter {iteration:4d} | C{current_cycle}:{current_stage:<10}] Games: {total_games:6d} | "
+              f"WR(+): {y_plus*100:5.1f}% (W:{wins_a_white}/B:{wins_a_black}) | "
               f"a_k: {a_k:5.2f} | Speed: {speed:5.1f} g/s | Elapsed: {int(total_elapsed)}s")
         if len(diff_str) <= 6:
             print(f"         Active Weights: {', '.join(diff_str)}")
         else:
-            # Multi-line formatted display so all 22 parameters are visible
+            # Multi-line formatted display so all parameters are visible
             chunk_size = 5
             for chunk_idx in range(0, len(diff_str), chunk_size):
                 chunk = diff_str[chunk_idx:chunk_idx + chunk_size]
                 prefix = "         Active Weights: " if chunk_idx == 0 else "                         "
                 print(f"{prefix}{', '.join(chunk)}")
 
-        session_iter = iteration - start_iteration
         if args.max_iterations > 0 and session_iter >= args.max_iterations:
             print(f"\n[+] Reached session iteration limit ({args.max_iterations} iters, global: {iteration}). Optimization complete.")
             break
+
+    # Final validation gate before closing if session ran steps not just evaluated
+    if args.eval_interval > 0 and (iteration - start_iteration) > 0 and ((iteration - start_iteration) % args.eval_interval != 0) and not interrupted:
+        _, best_w = run_validation_gate(ema_w, best_w, iteration)
+        save_checkpoint(iteration, total_games, active_w, best_w, 0.5, args.depth, args.threads,
+                        time.time() - total_time_start, stage=current_stage or "all", cycle=current_cycle, ema_w=ema_w)
 
     # Final summary
     print("\n" + "=" * 80)

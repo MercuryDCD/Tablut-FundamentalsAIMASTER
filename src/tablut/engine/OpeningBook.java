@@ -88,7 +88,7 @@ public final class OpeningBook {
     private final Map<Long, List<BookEntry>> book = new HashMap<>(512);
     private final Random rng;
     private boolean greedy = true; // Default: greedy for official tournament
-    private double epsilon = 0.20; // 80% primary best move, 20% alternative book moves
+    private double epsilon = 0.0; // Default: deterministic highest-weight move in tournament play
 
     public OpeningBook() {
         this(new Random());
@@ -129,6 +129,7 @@ public final class OpeningBook {
     public int lookupMove(FastState state) {
         // Fast scratch board for transformation
         FastState transformed = new FastState();
+        List<BookEntry> combined = null;
 
         for (int sym = 0; sym < NUM_SYMMETRIES; sym++) {
             applyTransformation(state, transformed, sym);
@@ -136,22 +137,41 @@ public final class OpeningBook {
 
             List<BookEntry> entries = book.get(hash);
             if (entries != null && !entries.isEmpty()) {
-                int chosenCanonicalMove = selectMove(entries);
-                if (chosenCanonicalMove != Move.NULL_MOVE) {
+                for (int i = 0; i < entries.size(); i++) {
+                    BookEntry entry = entries.get(i);
                     // Map the canonical move back to the actual board orientation
-                    int from = INVERSE_TRANSFORM[sym][Move.getFrom(chosenCanonicalMove)];
-                    int to   = INVERSE_TRANSFORM[sym][Move.getTo(chosenCanonicalMove)];
+                    int from = INVERSE_TRANSFORM[sym][Move.getFrom(entry.move)];
+                    int to   = INVERSE_TRANSFORM[sym][Move.getTo(entry.move)];
                     int actualMove = Move.encode(from, to);
 
                     // Safety verification: ensure the move is strictly legal in the current state
                     if (isMoveLegal(state, actualMove)) {
-                        return actualMove;
+                        if (combined == null) {
+                            combined = new ArrayList<>(8);
+                        }
+                        boolean merged = false;
+                        for (int j = 0; j < combined.size(); j++) {
+                            BookEntry existing = combined.get(j);
+                            if (existing.move == actualMove) {
+                                if (entry.weight > existing.weight) {
+                                    combined.set(j, new BookEntry(actualMove, entry.weight));
+                                }
+                                merged = true;
+                                break;
+                            }
+                        }
+                        if (!merged) {
+                            combined.add(new BookEntry(actualMove, entry.weight));
+                        }
                     }
                 }
             }
         }
 
-        return Move.NULL_MOVE;
+        if (combined == null || combined.isEmpty()) {
+            return Move.NULL_MOVE;
+        }
+        return selectMove(combined);
     }
 
     private int selectMove(List<BookEntry> entries) {
@@ -333,9 +353,10 @@ public final class OpeningBook {
         // Line 1: Opponent White flank development (e3 -> d3), Black Rhombus response (e2 -> c2)
         // startPly = 1 so White initiates outer-cross 1-square lines (e7f7, e7d7, c5c4, g5g6) that avoid
         // the 1... e2 -> e3 / 2... f9 -> f5 counter-capture trap against e4/g5.
+        // Weight lowered to 130 in Phase 17 so it does not shadow Line 10 (145, f5f6) at ply 4.
         addLine(new String[] {
             "e3d3", "e2c2", "e4f4", "e8g8", "d5d6", "b5b7"
-        }, 140, 1);
+        }, 130, 1);
 
         // Line 2: Match line vs teammate Luca (Game 1): White e3 -> d3, Black camp pin f1 -> f3
         // White immediately counters with d5 -> d6; Black responds e8 -> g8; White safely clears e4 -> f4

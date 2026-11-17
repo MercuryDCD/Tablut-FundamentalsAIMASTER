@@ -1,5 +1,7 @@
 package tablut.engine;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.util.Arrays;
 import java.util.concurrent.atomic.LongAdder;
 
@@ -58,6 +60,9 @@ public final class TranspositionTable {
     private final long[] tableLocks;
     private final long[] tableData;
 
+    private static final VarHandle LOCK_VH = MethodHandles.arrayElementVarHandle(long[].class);
+    private static final VarHandle DATA_VH = MethodHandles.arrayElementVarHandle(long[].class);
+
     private byte currentAge = 0;
 
     // Diagnostics (LongAdder for thread-safe lock-free tracking under Lazy SMP)
@@ -115,8 +120,9 @@ public final class TranspositionTable {
         int slot0 = bucket << 1;
 
         // 1. Probe Slot 0 (Depth-Preferred)
-        long data0 = tableData[slot0];
-        long lock0 = tableLocks[slot0];
+        long lock0 = (long) LOCK_VH.getOpaque(tableLocks, slot0);
+        VarHandle.loadLoadFence();
+        long data0 = (long) DATA_VH.getOpaque(tableData, slot0);
         if ((lock0 ^ data0) == zobristHash && unpackFlag(data0) != FLAG_NONE) {
             hits.increment();
             return slot0;
@@ -124,8 +130,9 @@ public final class TranspositionTable {
 
         // 2. Probe Slot 1 (Always-Replace fallback)
         int slot1 = slot0 | 1;
-        long data1 = tableData[slot1];
-        long lock1 = tableLocks[slot1];
+        long lock1 = (long) LOCK_VH.getOpaque(tableLocks, slot1);
+        VarHandle.loadLoadFence();
+        long data1 = (long) DATA_VH.getOpaque(tableData, slot1);
         if ((lock1 ^ data1) == zobristHash && unpackFlag(data1) != FLAG_NONE) {
             hits.increment();
             return slot1;
@@ -133,6 +140,45 @@ public final class TranspositionTable {
 
         misses.increment();
         return -1;
+    }
+
+    /**
+     * Atomically probes the table and returns the verified 64-bit packed entry snapshot.
+     * Returning the verified value directly prevents post-probe TOCTOU races where another
+     * Lazy SMP thread overwrites the slot before getDepth/getFlag/getScore are invoked.
+     *
+     * @param zobristHash 64-bit state hash
+     * @return verified 64-bit packed entry payload, or 0L on miss/torn read
+     */
+    public long probeRaw(long zobristHash) {
+        int bucket = (int) (zobristHash & bucketMask);
+        int slot0 = bucket << 1;
+
+        long lock0 = (long) LOCK_VH.getOpaque(tableLocks, slot0);
+        VarHandle.loadLoadFence();
+        long data0 = (long) DATA_VH.getOpaque(tableData, slot0);
+        if ((lock0 ^ data0) == zobristHash && unpackFlag(data0) != FLAG_NONE) {
+            hits.increment();
+            return data0;
+        }
+
+        int slot1 = slot0 | 1;
+        long lock1 = (long) LOCK_VH.getOpaque(tableLocks, slot1);
+        VarHandle.loadLoadFence();
+        long data1 = (long) DATA_VH.getOpaque(tableData, slot1);
+        if ((lock1 ^ data1) == zobristHash && unpackFlag(data1) != FLAG_NONE) {
+            hits.increment();
+            return data1;
+        }
+
+        misses.increment();
+        return 0L;
+    }
+
+    private void writeSlot(int slot, long data, long lock) {
+        DATA_VH.setOpaque(tableData, slot, data);
+        VarHandle.storeStoreFence();
+        LOCK_VH.setOpaque(tableLocks, slot, lock);
     }
 
     /**
@@ -152,12 +198,14 @@ public final class TranspositionTable {
         int slot0 = bucket << 1;
         int slot1 = slot0 | 1;
 
-        long data0 = tableData[slot0];
-        long lock0 = tableLocks[slot0];
+        long lock0 = (long) LOCK_VH.getOpaque(tableLocks, slot0);
+        VarHandle.loadLoadFence();
+        long data0 = (long) DATA_VH.getOpaque(tableData, slot0);
         boolean hit0 = ((lock0 ^ data0) == zobristHash && unpackFlag(data0) != FLAG_NONE);
 
-        long data1 = tableData[slot1];
-        long lock1 = tableLocks[slot1];
+        long lock1 = (long) LOCK_VH.getOpaque(tableLocks, slot1);
+        VarHandle.loadLoadFence();
+        long data1 = (long) DATA_VH.getOpaque(tableData, slot1);
         boolean hit1 = ((lock1 ^ data1) == zobristHash && unpackFlag(data1) != FLAG_NONE);
 
         int ttScore = scoreToTt(score, ply);
@@ -175,8 +223,7 @@ public final class TranspositionTable {
                     move = unpackMove(data0);
                 }
                 long newData = packData(ttScore, move, depth, flag, currentAge);
-                tableData[slot0] = newData;
-                tableLocks[slot0] = zobristHash ^ newData;
+                writeSlot(slot0, newData, zobristHash ^ newData);
             }
             return;
         }
@@ -190,24 +237,21 @@ public final class TranspositionTable {
             // If this update is deeper than Slot 0 or Slot 0 is stale, promote to Slot 0
             if (depth > oldDepth0 || isStale0) {
                 if (unpackFlag(data0) != FLAG_NONE) {
-                    tableData[slot1] = data0;
-                    tableLocks[slot1] = lock0;
+                    writeSlot(slot1, data0, lock0);
                 }
                 int move = bestMove;
                 if (move == NO_MOVE) {
                     move = unpackMove(data1);
                 }
                 long newData = packData(ttScore, move, depth, flag, currentAge);
-                tableData[slot0] = newData;
-                tableLocks[slot0] = zobristHash ^ newData;
+                writeSlot(slot0, newData, zobristHash ^ newData);
             } else {
                 int move = bestMove;
                 if (move == NO_MOVE) {
                     move = unpackMove(data1);
                 }
                 long newData = packData(ttScore, move, depth, flag, currentAge);
-                tableData[slot1] = newData;
-                tableLocks[slot1] = zobristHash ^ newData;
+                writeSlot(slot1, newData, zobristHash ^ newData);
             }
             return;
         }
@@ -221,17 +265,14 @@ public final class TranspositionTable {
         if (flag0 == FLAG_NONE || isStale0 || depth >= oldDepth0) {
             // Demote old Slot 0 to Slot 1 if valid
             if (flag0 != FLAG_NONE) {
-                tableData[slot1] = data0;
-                tableLocks[slot1] = lock0;
+                writeSlot(slot1, data0, lock0);
             }
             long newData = packData(ttScore, bestMove, depth, flag, currentAge);
-            tableData[slot0] = newData;
-            tableLocks[slot0] = zobristHash ^ newData;
+            writeSlot(slot0, newData, zobristHash ^ newData);
         } else {
             // Slot 0 is deeper and active: store into Slot 1 (Always-Replace fallback)
             long newData = packData(ttScore, bestMove, depth, flag, currentAge);
-            tableData[slot1] = newData;
-            tableLocks[slot1] = zobristHash ^ newData;
+            writeSlot(slot1, newData, zobristHash ^ newData);
         }
     }
 
@@ -249,6 +290,10 @@ public final class TranspositionTable {
 
     public int getScore(int index, int ply) {
         return scoreFromTt(unpackScore(tableData[index]), ply);
+    }
+
+    public static int unpackScore(long data, int ply) {
+        return scoreFromTt(unpackScore(data), ply);
     }
 
     // --- Hyatt 64-bit Bitwise Packing Utilities ---
