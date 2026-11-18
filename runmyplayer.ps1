@@ -17,7 +17,7 @@ if (!(Test-Path "$BinDir\tablut\engine\TablutAgentClient.class")) {
     Write-Host "Compiling DajeGeppetto Java engine into bin/..." -ForegroundColor Yellow
     New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
     $compileSources = Get-ChildItem (Join-Path $ScriptDir "src\tablut\engine\*.java") | ForEach-Object { $_.FullName }
-    javac -cp $ClassPath -d $BinDir $compileSources
+    javac -encoding UTF-8 -cp $ClassPath -d $BinDir $compileSources
 }
 
 java -Xmx4g -Xms512m -XX:+UseG1GC -cp $ClassPath tablut.engine.TablutAgentClient $Role $Timeout $ServerIp

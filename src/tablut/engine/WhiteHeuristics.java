@@ -21,7 +21,7 @@ package tablut.engine;
  *    Penalizes configurations where hostile flankers threaten 1-ply custodian captures.
  * 
  * 5. King-Defender Shield Cohesion & Dispersion Penalty (Phase 12 Pillar 2):
- *    Cures the "Peón Señuelo" (Decoy Pawn) dispersion syndrome. Dense escort shields within
+ *    Cures the "Peon Senuelo" (Decoy Pawn) dispersion syndrome. Dense escort shields within
  *    Chebyshev distance 1-2 of the King receive dense positive gradients, while isolated pawns
  *    wandering > 3 Manhattan steps incur quadratic dispersion penalties.
  * 
