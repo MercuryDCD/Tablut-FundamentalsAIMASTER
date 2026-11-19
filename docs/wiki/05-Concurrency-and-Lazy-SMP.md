@@ -16,22 +16,39 @@ Parallelizing alpha-beta search on shared-memory multi-core systems is tradition
 2. **Lazy SMP (Shared Memory Parallelism):**
    All available worker threads execute independent Iterative Deepening Searches starting from the root position. The threads do not communicate directly, do not pass messages, and do not lock tree nodes. Instead, they interact exclusively by reading and writing to a single, globally shared **Transposition Table**.
 
-```
-+-------------------------------------------------------------------------+
-|                    LAZY SMP SEARCH COORDINATOR                          |
-|                                                                         |
-|  [Master Thread 0]      [Helper Thread 1]     [Helper Thread 2] ...    |
-|   IDS: Depth d           IDS: Depth d+1        IDS: Depth d             |
-|   Root Order: 0,1,2..    Root Order: 1,2,0..   Root Order: 2,0,1..      |
-|         │                      │                     │                  |
-|         └──────────────┬───────┴─────────────┬───────┘                  |
-|                        ▼                     ▼                          |
-|       ┌─────────────────────────────────────────────────────────┐       |
-|       │         GLOBAL LOCKLESS TRANSPOSITION TABLE             │       |
-|       │           2^23 Entries (~134 MB, 2-Slot Buckets)        │       |
-|       │          Bob Hyatt's XOR Verification Invariant         │       |
-|       └─────────────────────────────────────────────────────────┘       |
-+-------------------------------------------------------------------------+
+```mermaid
+flowchart TD
+    classDef coord fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
+    classDef worker fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
+    classDef tt fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
+    classDef merge fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
+
+    Coord["ParallelSearchEngine Coordinator<br/>(4 vCPUs · Shared volatile stopped Flag)"]:::coord
+
+    subgraph Workers["Diversified Lazy SMP Worker Pool"]
+        W0["Master Thread 0<br/>IDS: d = 1, 2, 3...<br/>Root Order: (i + 0) mod N"]:::worker
+        W1["Helper Thread 1<br/>IDS: d = 2, 3, 4...<br/>Root Order: (i + 1) mod N"]:::worker
+        W2["Helper Thread 2<br/>IDS: d = 1, 2, 3...<br/>Root Order: (i + 2) mod N"]:::worker
+        W3["Helper Thread 3<br/>IDS: d = 2, 3, 4...<br/>Root Order: (i + 3) mod N"]:::worker
+    end
+
+    Coord --> W0
+    Coord --> W1
+    Coord --> W2
+    Coord --> W3
+
+    TT[("Global Lockless Transposition Table<br/>2²³ Entries (~134 MB) · 2-Slot Buckets<br/>VarHandle Opaque + Hyatt XOR")]:::tt
+
+    W0 <--> TT
+    W1 <--> TT
+    W2 <--> TT
+    W3 <--> TT
+
+    W0 --> Join["chooseBestWorker() + isBetterWorkerResult()<br/>(Forced-Loss Protected · Partial-Depth Adoption)"]:::merge
+    W1 --> Join
+    W2 --> Join
+    W3 --> Join
+    Join --> Park["Join &amp; Park All Threads -> 0.0% CPU on Opponent Turn"]:::coord
 ```
 
 ### 1.1 Why Lazy SMP Wins
@@ -68,14 +85,9 @@ Each bucket $b$ contains two contiguous slots:
 
 $$\text{tableLocks}[\text{index}] = \text{zobristHash} \oplus \text{tableData}[\text{index}]$$
 
-```
-64-Bit Packed tableData:
- 63       40 39         24 23     16 15      8 7        0
-+-----------+-------------+---------+---------+----------+
-|   Score   |  Best Move  |  Depth  |  Flags  | Table Age|
-| (24 bits) |  (16 bits)  | (8 bits)| (8 bits)| (8 bits) |
-+-----------+-------------+---------+---------+----------+
-```
+<p align="center">
+  <img src="../assets/bit_architecture.svg" alt="64-Bit Packed Transposition Table Entry and 2-Slot Bucket Hierarchy" width="100%"/>
+</p>
 
 ### 2.2 Atomic Verification on Probe (`VarHandle` Opaque Access)
 In Phase 16, `TranspositionTable.java` upgraded raw array accesses to Java **`MethodHandles.VarHandle` opaque reads/writes** (`LOCK_VH` and `DATA_VH`) with `LongAdder` diagnostics. Opaque mode prevents the JIT compiler from hoisting or tearing 64-bit `long` accesses across concurrent Lazy SMP workers while incurring zero mutex or memory-fence overhead.
@@ -103,25 +115,34 @@ If a concurrent thread overwrites `tableData[index]` during a read, the relation
 
 ```mermaid
 flowchart TD
-    subgraph "Thread 0 (Writing)"
-        W1["Compute zobristHash & pack tableData"] --> W2["DATA_VH.setOpaque(tableData, idx, data)"]
-        W2 --> W3["LOCK_VH.setOpaque(tableLocks, idx, zobristHash ^ data)"]
+    classDef write fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
+    classDef mem fill:#3b0764,stroke:#a855f7,color:#f3e8ff,stroke-width:1.5px
+    classDef read fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
+    classDef dec fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
+    classDef hit fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
+    classDef miss fill:#7f1d1d,stroke:#ef4444,color:#fee2e2,stroke-width:1.5px
+
+    subgraph Writer["Thread 0 (Lockless Writer)"]
+        W1["Compute zobristHash &amp; pack 64-bit tableData"]:::write --> W2["DATA_VH.setOpaque(tableData, slotIdx, data)"]:::write
+        W2 --> W3["LOCK_VH.setOpaque(tableLocks, slotIdx, zobristHash ^ data)"]:::write
     end
 
-    subgraph "Concurrent Access: Zero Locks"
-        W2 -. "Opaque Write" .-> TableData[("tableData[2^23]")]
-        W3 -. "Opaque Write" .-> TableLocks[("tableLocks[2^23]")]
+    subgraph Shared["Shared Heap Arrays (Zero Locks · 134 MB)"]
+        TableData[("tableData[2²³]")]:::mem
+        TableLocks[("tableLocks[2²³]")]:::mem
+        W2 -. "Opaque Write" .-> TableData
+        W3 -. "Opaque Write" .-> TableLocks
     end
 
-    subgraph "Thread 1 (Probing)"
-        P1["Read data = DATA_VH.getOpaque(idx)"]
-        P2["Read lock = LOCK_VH.getOpaque(idx)"]
+    subgraph Reader["Thread 1 (Lockless Reader: Slot 0 -> Slot 1)"]
+        P1["data = DATA_VH.getOpaque(slotIdx)"]:::read
+        P2["lock = LOCK_VH.getOpaque(slotIdx)"]:::read
         TableData -. "Opaque Read" .-> P1
         TableLocks -. "Opaque Read" .-> P2
-        P1 --> Check{"(lock ^ data) == zobristHash?"}
+        P1 --> Check{"(lock ^ data) == zobristHash?"}:::dec
         P2 --> Check
-        Check -- "True" --> Valid["Cache HIT: Safe, consistent data"]
-        Check -- "False (Torn Read)" --> Miss["Cache MISS: Harmless miss, compute normally"]
+        Check -- "True (Consistent)" --> Valid["Cache HIT: Extract Move, Score, Depth, Flags"]:::hit
+        Check -- "False (Torn Read / Collision)" --> Miss["Harmless MISS: Probe Slot 1 or Search Normally"]:::miss
     end
 ```
 

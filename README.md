@@ -15,21 +15,9 @@ An autonomous, tournament-grade Artificial Intelligence agent engineered to comp
 
 Ashton Tablut is an asymmetric $9 \times 9$ strategy game played between two unequal factions:
 
-```
-       a   b   c   d   e   f   g   h   i
-    +---+---+---+---+---+---+---+---+---+
-  9 |   |   |   | C | C | C |   |   |   | 9   (North Citadel)
-  8 |   |   |   |   | C |   |   |   |   | 8
-  7 |   |   |   |   | W |   |   |   |   | 7
-  6 |   |   |   |   | W |   |   |   |   | 6
-  5 | C | C | W | W | K | W | W | C | C | 5   (Throne: e5; West/East Citadels)
-  4 |   |   |   |   | W |   |   |   |   | 4
-  3 |   |   |   |   | W |   |   |   |   | 3
-  2 |   |   |   |   | C |   |   |   |   | 2
-  1 |   |   |   | C | C | C |   |   |   | 1   (South Citadel)
-    +---+---+---+---+---+---+---+---+---+
-       a   b   c   d   e   f   g   h   i
-```
+<p align="center">
+  <img src="docs/assets/ashton_board.svg" alt="Ashton Tablut Official 9x9 Board Topology &amp; Starting Setup" width="100%"/>
+</p>
 
 * **The White Defenders (1 King + 8 Soldiers):**
   * Start in a central cross guarding their King on the central Throne (`e5`).
@@ -51,26 +39,40 @@ How does the DajeGeppetto agent choose its moves in a tournament match?
 
 ```mermaid
 flowchart TD
-    State["Received Board State from Server"] --> BookCheck{"Turn <= 6 and<br/>in Opening Book?"}
-    
-    BookCheck -- "Yes" --> BookLookup["Global D4 Dihedral Symmetry Lookup<br/>(Instant response < 0.01 ms)"]
-    BookLookup --> SendMove["Transmit Action to Server"]
-    
-    BookCheck -- "No" --> IDS["Iterative Deepening Search<br/>(Depth 1..18 @ 60s)"]
-    
-    IDS --> SMP["Lazy SMP Worker Pool (4 vCPUs)<br/>2-Slot Lockless TT (VarHandle + Hyatt XOR)"]
-    SMP --> MoveOrder["Move Ordering Cascade<br/>(TT Move > Wins > Captures > Killers > History + Root Score Sort)"]
-    MoveOrder --> PVS["Principal Variation Search (PVS) + LMR<br/>(Full Window PV + Null-Window Scouts + Singular Ext)"]
-    
-    PVS --> LeafCheck{"Leaf Node Reached?"}
-    LeafCheck -- "Captures / Escapes Active" --> Quiescence["Quiescence Search<br/>(Dynamic Delta Margin + Escape Extensions)"]
-    LeafCheck -- "Quiet State" --> Eval["Heuristic Evaluation<br/>(24 SPSA Parameter Weights + Contempt)"]
-    
-    Quiescence --> Eval
-    Eval --> TimeCheck{"Time Expiring or Cutoff?<br/>(96% Safety Ratio + Partial-Depth Adoption)"}
-    
+    classDef io fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
+    classDef fast fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
+    classDef search fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
+    classDef eval fill:#3b0764,stroke:#a855f7,color:#f3e8ff,stroke-width:1.5px
+    classDef decision fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
+
+    State["TCP Board State from Referee Server"]:::io --> FastPath{"O(1) Mate / Escape or<br/>Opening Book Hit?"}:::decision
+
+    subgraph Fast["Zero-Latency Fast Path (< 5 ms)"]
+        FastPath -- "Forced Mate / Escape" --> Cutoff["TacticalCutoffs<br/>(Analytic 1-Ply Win / 2-Ply Fork)"]:::fast
+        FastPath -- "Turn <= 6 Book Hit" --> BookLookup["OpeningBook: Global D4 Scan<br/>(29 Systems, ε = 0.0, < 0.01 ms)"]:::fast
+    end
+
+    subgraph Core["Multi-Core Search Core (4 vCPUs · Lazy SMP)"]
+        FastPath -- "Search Required" --> IDS["Iterative Deepening Search<br/>(Depth 1..18 @ 60s · Aspiration Δ=120)"]:::search
+        IDS --> SMP["4-Thread Lazy SMP Pool<br/>(Depth Staggering + Root Permutations)"]:::search
+        SMP <--> TT[("2-Slot Lockless TT (134 MB)<br/>VarHandle Opaque + Hyatt XOR")]:::search
+        SMP --> MoveOrder["Lazy Move Ordering Cascade<br/>(TT > Wins > Captures > Killers > History)"]:::search
+        MoveOrder --> PVS["PVS + King-Guarded LMR<br/>+ Singular Extensions"]:::search
+    end
+
+    subgraph Leaf["Leaf Stability & Time Control"]
+        PVS --> LeafCheck{"Leaf Node?"}:::decision
+        LeafCheck -- "Captures / Escapes" --> Quiescence["Quiescence Search<br/>(Dynamic Delta Margin + Escape Ext)"]:::eval
+        LeafCheck -- "Quiet Position" --> Eval["24-Weight Linear Evaluator<br/>(30.9M evals/s + Zero-Centered Contempt)"]:::eval
+        Quiescence --> Eval
+        Eval --> TimeCheck{"82% Soft Cutoff or<br/>96% Hard Deadline?"}:::decision
+    end
+
     TimeCheck -- "Time Remaining" --> IDS
-    TimeCheck -- "Deadline Reached" --> SendMove
+    TimeCheck -- "Stop (Partial-Depth Adoption)" --> BestWorker["isBetterWorkerResult()<br/>(Forced-Loss Protected)"]:::search
+    BestWorker --> SendMove["Transmit Action JSON &amp; Park Threads (0% CPU)"]:::io
+    Cutoff --> SendMove
+    BookLookup --> SendMove
 ```
 
 ---
@@ -107,6 +109,10 @@ Rather than treating AI algorithms as black boxes, each component in DajeGeppett
 * **The Problem:** On pure 4-vCPU hardware without GPU acceleration, heavy neural evaluators throttle search depth, whereas linear bitwise heuristics allow reaching **Depth 13–18** (100M–340M nodes/move at 60s), resolving multi-ply forced mates and escape forks cleanly.
 * **The Solution:** We engineered **24 domain-specific features** (escape corridors, 2-way forks, `SAFE_FORKS`, Rhombus blockades with White Rhombus-contest exemption, camp preservation, graduated Throne-abandon protection, shield cohesion, zero-centered draw contempt, and open-field swarm pressure) running at **30.9 million evaluations/sec**.
 * **Multi-Stage CRN SPSA Tuning:** Using **Common Random Numbers (CRN)** paired evaluation, Black non-regression gating, and a 4-stage Depth-5/6 pipeline (`scripts/overnight_60s_pipeline.py`), the active weights were distilled from 38,668 deep self-play games and validated via multi-resolution shootouts (Depth 5, 750ms, 1200ms).
+
+<p align="center">
+  <img src="docs/assets/spsa_pipeline.svg" alt="Phase 17 Multi-Stage Depth-5/6 CRN SPSA Curriculum and Engine KPIs" width="100%"/>
+</p>
 
 ---
 
@@ -173,6 +179,7 @@ Launch the agent conforming to the official UNIBO tournament specification:
 
 ```
 ├── docs/
+│   ├── assets/                   # Vector SVG diagrams (board, bit-layout, geometry, D4, SPSA)
 │   ├── references/               # Academic papers and official competition slides
 │   └── wiki/                     # In-depth technical documentation
 │       ├── Home.md                                      # Overview, Ashton rules & specifications

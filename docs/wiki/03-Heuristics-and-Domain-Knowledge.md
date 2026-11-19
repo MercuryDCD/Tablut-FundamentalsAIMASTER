@@ -69,24 +69,12 @@ Measuring distance to the generic board perimeter caused the King to navigate di
 
 `BoardConstants.java` corrects this with a precomputed lookup array `MIN_DISTANCE_TO_ESCAPE[81]` that measures shortest Manhattan distances strictly to the 20 legal winning squares (16 escapes + 4 corners).
 
-### 3.2 The 8-Point Rhombus Blockade
-The optimal perimeter blockade for Black forms an 8-point ring (the Ashton Rhombus):
+### 3.2 The 8-Point Rhombus Blockade & Proactive Escape Geometry
+The optimal perimeter blockade for Black forms an 8-point ring (the Ashton Rhombus) combined with preserved camp fronts, while White counters by constructing proactive 2-step `SAFE_FORK` breakouts escorted by a cohesive defender shield:
 
-```
-       a   b   c   d   e   f   g   h   i
-    +---+---+---+---+---+---+---+---+---+
-  9 |   |   |   | C | C | C |   |   |   | 9
-  8 |   |   | R |   | C |   | R |   |   | 8  (c8, g8)
-  7 |   | R |   |   |   |   |   | R |   | 7  (b7, h7)
-  6 |   |   |   |   |   |   |   |   |   | 6
-  5 | C | C |   |   | T |   |   | C | C | 5  (Throne: e5)
-  4 |   |   |   |   |   |   |   |   |   | 4
-  3 |   | R |   |   |   |   |   | R |   | 3  (b3, h3)
-  2 |   |   | R |   | C |   | R |   |   | 2  (c2, g2)
-  1 |   |   |   | C | C | C |   |   |   | 1
-    +---+---+---+---+---+---+---+---+---+
-       a   b   c   d   e   f   g   h   i
-```
+<p align="center">
+  <img src="../assets/heuristics_geometry.svg" alt="Black 8-Point Rhombus Blockade vs White Proactive SAFE_FORK and Shield Cohesion" width="100%"/>
+</p>
 
 Occupying squares `c2, g2, b3, h3, b7, h7, c8, g8` intercepts all diagonal and orthogonal escape rays radiating from the central castle before the King can reach the perimeter. `BlackHeuristics.java` evaluates occupancy of these 8 key squares, penalizing Black whenever a soldier breaks the ring unnecessarily.
 
@@ -141,23 +129,28 @@ $$\text{Evaluate}(S) = \begin{cases} +\text{Score}_{\text{White}}(S), & \text{if
 
 ```mermaid
 flowchart LR
-    subgraph "Feature Extraction"
-        S["FastState State (S)"] --> W["WhiteHeuristics.evalWhite()"]
-        S --> B["BlackHeuristics.evalBlack()"]
+    classDef state fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
+    classDef white fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
+    classDef black fill:#3b0764,stroke:#a855f7,color:#f3e8ff,stroke-width:1.5px
+    classDef math fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
+    classDef out fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
+
+    subgraph Extract["Single-Pass 81-Square Loop Fusion"]
+        S["FastState (byte[81])"]:::state --> W["WhiteHeuristics.evalWhite()<br/>(12 terms: Escapes, SAFE_FORKS, Shield)"]:::white
+        S --> B["BlackHeuristics.evalBlack()<br/>(12 terms: Rhombus, Chains, Swarm)"]:::black
     end
 
-    subgraph "Linear Combination"
-        W --> W_Score["White Score = dot(w_white, f_white)"]
-        B --> B_Score["Black Score = dot(w_black, f_black)"]
+    subgraph Combine["Zero-Sum Linear Differential"]
+        W --> W_Score["W = dot(w_white, f_white)"]:::white
+        B --> B_Score["B = dot(w_black, f_black)"]:::black
+        W_Score --> Diff["Delta = W - B"]:::math
+        B_Score --> Diff
     end
 
-    W_Score --> Diff["Delta = White Score - Black Score"]
-    B_Score --> Diff
-
-    subgraph "Negamax Polarity Normalization"
-        Diff --> Polarity{"state.turn == WHITE?"}
-        Polarity -- "Yes" --> RetWhite["Return +Delta"]
-        Polarity -- "No" --> RetBlack["Return -Delta"]
+    subgraph Negamax["Negamax Polarity"]
+        Diff --> Polarity{"state.turn == WHITE?"}:::math
+        Polarity -- "Yes" --> RetWhite["Return +Delta"]:::out
+        Polarity -- "No" --> RetBlack["Return -Delta"]:::out
     end
 ```
 

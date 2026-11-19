@@ -52,25 +52,36 @@ String response = new String(buffer, StandardCharsets.UTF_8);
 sequenceDiagram
     autonumber
     participant Server as Referee Server (Server.jar)
-    participant Client as TablutAgentClient (Agent)
-    
-    Client->>Server: Connect TCP Socket (Port 5800 or 5801)
-    Client->>Server: Write Player Name (4-byte length prefix + UTF-8 string)
-    Server->>Client: Broadcast Initial State (JSON payload)
-    
+    participant Client as TablutAgentClient (DajeGeppetto)
+    participant Pool as 4-vCPU Lazy SMP Pool
+
+    rect rgba(30, 58, 95, 0.25)
+        Note over Server,Client: Connection & Handshake
+        Client->>Server: Connect TCP Socket (Port 5800 WHITE / 5801 BLACK)
+        Client->>Server: Write Player Name ("DajeGeppetto", 4-byte Big-Endian prefix)
+        Server->>Client: Broadcast Initial Board State JSON
+    end
+
     loop Match Lifecycle
         alt Agent's Turn
-            Note over Client: SearchEngine computes best move<br/>(Dynamic soft/hard time cutoffs)
-            Client->>Server: Send Action JSON: {"from":"e4","to":"e3","turn":"WHITE"}
-            Server->>Client: Broadcast Updated State JSON
+            rect rgba(6, 78, 59, 0.25)
+                Client->>Pool: Wake 4 Workers (IDS + PVS + LMR, 96% Budget)
+                Note over Pool: 82% Soft Cutoff (dynamic b_eff)<br/>+ Verified Partial-Depth Root Adoption
+                Pool-->>Client: Best Move (or < 5 ms Fast-Path Cutoff / Book Hit)
+                Client->>Pool: Set stopped = true & Join All Threads
+                Client->>Server: Send Action JSON {"from":"e7","to":"f7","turn":"WHITE"}
+                Server->>Client: Broadcast Confirmed Updated State JSON
+            end
         else Opponent's Turn
-            Note over Client: Strict Blocking Read: in.readFully()<br/>(0.0% CPU usage, threads parked)
-            Server->>Client: Broadcast Opponent Move & State JSON
+            rect rgba(59, 7, 100, 0.25)
+                Note over Client,Pool: Strict Kernel Blocking Read: in.readFully()<br/>0.0% CPU Usage · All Worker Threads Parked
+                Server->>Client: Broadcast Opponent Move & New State JSON
+            end
         end
     end
-    
-    Note over Server,Client: Terminal State Reached (Win / Loss / Draw)
-    Client->>Client: Close TCP Sockets & Clean Thread Pool Exit
+
+    Note over Server,Client: Terminal State Reached (WHITEWIN / BLACKWIN / DRAW)
+    Client->>Client: Close TCP Socket & Clean Executor Shutdown
 ```
 
 ---
@@ -110,6 +121,24 @@ To maximize search depth while reserving a safe JVM thread-join and TCP transmis
 $$\text{timeSafetyRatio} = 0.96$$
 
 At `60s/move`, the search uses up to **57.6 seconds** per full move (and exits in **0–6 ms** whenever an $O(1)$ or forced mate/escape is detected), empirically certified with zero timeout forfeits across all official 60s matches.
+
+```mermaid
+flowchart LR
+    classDef ok fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
+    classDef warn fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
+    classDef stop fill:#7f1d1d,stroke:#ef4444,color:#fee2e2,stroke-width:1.5px
+    classDef adopt fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
+
+    Start["0% — Start IDS<br/>(allocated = 0.96 × T)"]:::ok --> Mid["Depth d Completed<br/>Update dynamic b_eff = clamp(2.2, 4.5, T_d / T_{d-1})"]:::ok
+    Mid --> Soft{"Elapsed >= 82% AND<br/>Elapsed + 0.50·T_d·b_eff > allocated?"}:::warn
+    Soft -- "No" --> NextD["Launch Depth d + 1<br/>(Poll clock every 4096 nodes)"]:::adopt
+    Soft -- "Yes (Tier 1 Soft Cutoff)" --> ReturnPrev["Return Completed Depth d Move"]:::ok
+    NextD --> Hard{"96% Hard Deadline Hit?"}:::stop
+    Hard -- "No" --> Mid
+    Hard -- "Yes (Tier 2 Hard Stop)" --> Partial{"rootMoves[0] Done &amp;<br/>In-Window Non-Hanging Improvement?"}:::warn
+    Partial -- "Yes (Phase 17 Adoption)" --> ReturnPartial["Adopt Verified Depth d+1 Move"]:::adopt
+    Partial -- "No" --> ReturnPrev
+```
 
 ---
 

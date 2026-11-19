@@ -14,23 +14,9 @@ The board's geometric symmetry is governed by the **Dihedral Group of order 8 ($
 * **4 Rotations:** $0^\circ$ (identity), $90^\circ$ clockwise, $180^\circ$, and $270^\circ$ clockwise.
 * **4 Reflections:** Horizontal reflection (across row 4), Vertical reflection (across col 4), Main diagonal reflection ($y = x$), and Anti-diagonal reflection ($y = -x$).
 
-```
-                Vertical Axis
-                     │
-         c8          │          g8
-           \         │         /
-            \        │        /
-   b7        \       │       /        h7
-              \      │      /
-───────────────┼─────┼─────┼─────────────── Horizontal Axis
-              /      │      \
-   b3        /       │       \        h3
-            /        │        \
-           /         │         \
-         c2          │          g2
-                     │
-          Main Diag     Anti Diag
-```
+<p align="center">
+  <img src="../assets/d4_symmetry.svg" alt="Dihedral Symmetry Group D4 — 8-Fold Opening Book Compression" width="100%"/>
+</p>
 
 ### 1.1 Precomputed Coordinate Transformation Tables
 To eliminate run-time coordinate transformations during search, `OpeningBook.java` precomputes two lookup matrices:
@@ -55,39 +41,26 @@ For each square $\text{sq} = r \times 9 + c$:
 
 ```mermaid
 flowchart TD
-    subgraph "D4 Dihedral Group: 8 Symmetric Orientations"
-        A["Identity (0°)"]
-        B["Rotate 90° CW"]
-        C["Rotate 180°"]
-        D["Rotate 270° CW"]
-        E["Horizontal Flip"]
-        F["Vertical Flip"]
-        G["Main Diag Flip"]
-        H["Anti Diag Flip"]
+    classDef state fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
+    classDef sym fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
+    classDef probe fill:#3b0764,stroke:#a855f7,color:#f3e8ff,stroke-width:1.5px
+    classDef dec fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
+    classDef fast fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
+
+    RawState["Active Board State (S)"]:::state --> Loop["Iterate k = 0 .. 7 across all D4 Symmetries"]:::sym
+
+    subgraph D4["Precomputed TRANSFORM[k][sq] Lookup"]
+        Loop --> Rot["4 Rotations: 0°, 90°, 180°, 270°"]:::sym
+        Loop --> Ref["4 Reflections: Horiz, Vert, Main Diag, Anti-Diag"]:::sym
     end
 
-    RawState["Active Board State (S)"] --> A
-    RawState --> B
-    RawState --> C
-    RawState --> D
-    RawState --> E
-    RawState --> F
-    RawState --> G
-    RawState --> H
+    Rot --> HashCalc["Compute Zobrist Hash_k &amp; Probe Book Table"]:::probe
+    Ref --> HashCalc
 
-    A --> HashCalc["Calculate Zobrist Hashes across all 8 orientations"]
-    B --> HashCalc
-    C --> HashCalc
-    D --> HashCalc
-    E --> HashCalc
-    F --> HashCalc
-    G --> HashCalc
-    H --> HashCalc
-
-    HashCalc --> MinKey["Select Canonical Key = min(Hash_0 ... Hash_7)"]
-    MinKey --> ProbeBook{"Probe Opening Book Table"}
-    ProbeBook -- "Hit" --> MapBack["Map Book Move via INVERSE_TRANSFORM[bestSymmetry]"]
-    MapBack --> BestMove["Execute Move in <0.01 ms"]
+    HashCalc --> BestScan{"Global Best-Weight Match<br/>across all 8 Orientations?"}:::dec
+    BestScan -- "Hit (Phase 16 Global Scan)" --> MapBack["Project Canonical Move via<br/>INVERSE_TRANSFORM[bestSym]"]:::fast
+    MapBack --> BestMove["Execute Deterministic Reply (ε = 0.0) in < 0.01 ms"]:::fast
+    BestScan -- "Miss" --> Fallback["Fallback to 4-vCPU Lazy SMP Search"]:::state
 ```
 
 ### 1.2 Memory Compression & State Normalization

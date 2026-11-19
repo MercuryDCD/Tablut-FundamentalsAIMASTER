@@ -35,22 +35,32 @@ SPSA estimates the entire $p$-dimensional gradient vector using only **two evalu
 
 ```mermaid
 flowchart TD
-    Start["Current Weights Vector: theta_k"] --> GenDelta["Sample Bernoulli Perturbation: Delta_k in {-1, +1}^p"]
-    GenDelta --> VectorPlus["theta_plus = theta_k + c_k * Delta_k"]
-    GenDelta --> VectorMinus["theta_minus = theta_k - c_k * Delta_k"]
-    
-    VectorPlus --> SimPlus["HeadlessTournament: N Games (theta_plus vs Current)"]
-    VectorMinus --> SimMinus["HeadlessTournament: N Games (theta_minus vs Current)"]
-    
-    SimPlus --> EvalPlus["Score y_plus = (W + 0.5*D) / Total"]
-    SimMinus --> EvalMinus["Score y_minus = (W + 0.5*D) / Total"]
-    
-    EvalPlus --> GradCalc["g_k = (y_plus - y_minus) / (2 * c_k * Delta_k)"]
+    classDef state fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
+    classDef perturb fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
+    classDef sim fill:#3b0764,stroke:#a855f7,color:#f3e8ff,stroke-width:1.5px
+    classDef gate fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
+    classDef save fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
+
+    Start["Current Weight Vector: theta_k (24 params)"]:::state --> GenDelta["Sample Bernoulli Perturbation:<br/>Delta_k in {-1, +1}^p (Masked by Stage)"]:::perturb
+    GenDelta --> VectorPlus["theta_plus = theta_k + c_k * Delta_k"]:::perturb
+    GenDelta --> VectorMinus["theta_minus = theta_k - c_k * Delta_k"]:::perturb
+
+    subgraph CRN["HeadlessTournament.java (Zero-Alloc ThreadLocal · Paired CRN Seeds)"]
+        VectorPlus --> SimPlus["N Paired Games (White/Black Swap)<br/>theta_plus vs Incumbent (seed s_k)"]:::sim
+        VectorMinus --> SimMinus["N Paired Games (White/Black Swap)<br/>theta_minus vs Incumbent (same seed s_k)"]:::sim
+    end
+
+    SimPlus --> EvalPlus["y_plus = (W + 0.5*D) / Total<br/>+ winsABlack telemetry"]:::sim
+    SimMinus --> EvalMinus["y_minus = (W + 0.5*D) / Total<br/>+ winsABlack telemetry"]:::sim
+
+    EvalPlus --> GradCalc["Simultaneous Gradient:<br/>g_k = (y_plus - y_minus) / (2 * c_k * Delta_k)"]:::perturb
     EvalMinus --> GradCalc
-    
-    GradCalc --> Update["theta_{k+1} = theta_k + a_k * g_k"]
-    Update --> Checkpoint["Atomic Checkpoint: checkpoint_weights.json"]
-    Checkpoint --> NextIter["Increment k; Update Gain Sequences a_k, c_k"]
+
+    GradCalc --> Update["theta_{k+1} = theta_k + a_k * g_k<br/>&amp; EMA Tracking"]:::perturb
+    Update --> Gate{"Black Non-Regression Gate<br/>(wr >= 0.52 &amp; black_ok)?"}:::gate
+    Gate -- "Promoted" --> Checkpoint["Atomic Write-and-Rename:<br/>os.replace -> checkpoint_weights.json"]:::save
+    Gate -- "Keep Incumbent" --> NextIter["Increment k; Decay a_k, c_k"]:::state
+    Checkpoint --> NextIter
 ```
 
 1. **Simultaneous Perturbation Vector:**
@@ -97,6 +107,11 @@ In Tablut, repetitive play can cause engines to drift into sterile, cycling draw
 Tuning all 24 parameters simultaneously at shallow depths (Depth 3/4) introduces short-horizon bias that fails to generalize to 60s tournament play (Depth 13–18). In Phase 17, we introduced the end-to-end multi-stage Depth-5/6 pipeline (`scripts/overnight_60s_pipeline.py`), complemented by the 2-phase runner (`scripts/train_overnight.py`, upgraded to Depth 5 `white_focus` $\to$ Depth 6 `all`).
 
 ### 3.1 Four-Stage Depth-5/6 Curriculum (Nov 18–19 Run: 38,668 Games)
+
+<p align="center">
+  <img src="../assets/spsa_pipeline.svg" alt="Phase 17 Multi-Stage Depth-5/6 CRN SPSA Curriculum (38,668 Games)" width="100%"/>
+</p>
+
 1. **Stage 1 (`stage1_d5_white.json` — Depth 5, `white_focus`):** Calibrates the 11 White initiative/escape/cohesion weights (`indices [0, 2, 3, 4, 5, 6, 7, 17, 18, 21, 22]`) with all Black weights strictly frozen (**245 iterations, 17,836 games**, 90.7 min).
 2. **Stage 2A (`stage2a_d6_white.json` — Depth 6, `white_focus`):** Refines White weights under deeper tactical lookahead seeded from Stage 1's best checkpoint (**72 iterations, 3,192 games**, 92.5 min).
 3. **Stage 2B (`stage2b_d5_all.json` — Depth 5, `all` + `black_ok` gate):** Co-tunes all active weights simultaneously while enforcing a strict **Black non-regression promotion gate** (`wr >= 0.52` AND `winsABlack + 1 >= incumbentBlackWins`) (**184 iterations, 16,142 games**, 80.7 min).

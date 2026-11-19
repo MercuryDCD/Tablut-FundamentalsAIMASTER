@@ -62,15 +62,11 @@ Key static tables include:
 
 Heap allocations are strictly prohibited inside the search loop. Creating a `new Move(from, to)` object at each branch creates millions of transient allocations per second, triggering JVM garbage collection pauses that result in instant timeout forfeits.
 
-Instead, every move is encoded into a primitive 32-bit `int` (`Move.java`):
+Instead, every move is encoded into a primitive 32-bit `int` (`Move.java`), matching our zero-allocation memory layout alongside `byte[81]` and the 64-bit Transposition Table entry:
 
-```
- 31                          14 13           7 6            0
-+------------------------------+--------------+--------------+
-|           Unused             |   To Square  |  From Square |
-|          (18 bits)           |   (7 bits)   |   (7 bits)   |
-+------------------------------+--------------+--------------+
-```
+<p align="center">
+  <img src="../assets/bit_architecture.svg" alt="Zero-Allocation Memory Layout and Primitive Bit-Packing" width="100%"/>
+</p>
 
 ```java
 public final class Move {
@@ -129,25 +125,29 @@ A single orthogonal move in Ashton Tablut can capture at most 3 enemy pieces sim
 
 ```mermaid
 flowchart TD
-    subgraph "Traversing Forward: makeMove(move, undo)"
-        A["Reset UndoInfo at current ply"] --> B["Record oldTurn, oldKingSquare, oldZobristHash"]
-        B --> C["Update board[to] = board[from]; board[from] = EMPTY"]
-        C --> D["Incremental XOR Zobrist update for moved piece"]
-        D --> E{"Check Custodian Captures"}
-        E --> F["Remove captured pawns & record in undo.capturedSquares"]
-        F --> G["Toggle state.turn & XOR BLACK_TURN_KEY"]
+    classDef fwd fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
+    classDef rec fill:#3b0764,stroke:#a855f7,color:#f3e8ff,stroke-width:1.5px
+    classDef undo fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
+    classDef dec fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
+
+    subgraph Forward["Traversing Forward: makeMove(move, undo)"]
+        A["Reset preallocated UndoInfo at current ply"]:::fwd --> B["Save oldTurn, oldKingSquare, oldZobristHash"]:::fwd
+        B --> C["Mutate board[to] = board[from]; board[from] = EMPTY"]:::fwd
+        C --> D["Incremental XOR Zobrist update for moved piece"]:::fwd
+        D --> E{"Active Custodian Captures?"}:::dec
+        E -- "Yes (up to 3)" --> F["Remove pawns &amp; log in undo.capturedSquares[0..2]"]:::fwd
+        E -- "No" --> G["Toggle state.turn &amp; XOR BLACK_TURN_KEY"]:::fwd
+        F --> G
     end
 
-    subgraph "Recursive Tree Search"
-        G --> H["negamax(depth - 1, -beta, -alpha)"]
+    subgraph Recursion["Recursive Tree Search"]
+        G --> H["negamax(depth - 1, -beta, -alpha, ply + 1)"]:::rec
     end
 
-    subgraph "Unwinding: unmakeMove(move, undo)"
-        H --> I["Restore board[from] = board[to]; board[to] = EMPTY"]
-        I --> J["Reinsert captured pawns from undo.capturedSquares"]
-        J --> K["Restore state.kingSquare = undo.oldKingSquare"]
-        K --> L["Restore state.turn = undo.oldTurn"]
-        L --> M["Restore state.zobristHash = undo.oldZobristHash"]
+    subgraph Unwind["O(1) Rollback: unmakeMove(move, undo)"]
+        H --> I["Restore board[from] = board[to]; board[to] = EMPTY"]:::undo
+        I --> J["Reinsert captured pawns from undo.capturedSquares"]:::undo
+        J --> K["Restore kingSquare, turn &amp; exact oldZobristHash"]:::undo
     end
 ```
 

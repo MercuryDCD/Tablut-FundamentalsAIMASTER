@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 560" width="920" height="560">
+<defs>
+  <linearGradient id="bg2" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#0d1117"/>
+    <stop offset="100%" stop-color="#111827"/>
+  </linearGradient>
+</defs>
+<rect width="920" height="560" rx="14" fill="url(#bg2)" stroke="#30363d" stroke-width="1.5"/>
+<text x="28" y="36" fill="#f8fafc" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="19" font-weight="700">Zero-Allocation Memory Layout &amp; Primitive Bit-Packing</text>
+<text x="892" y="36" text-anchor="end" fill="#38bdf8" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="12">85.0M NPS · 0 B/s GC Pressure</text>
+<rect x="28" y="54" width="864" height="142" rx="10" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
+<text x="46" y="79" fill="#38bdf8" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700">1. Flat Board Array: byte[81] (sq = row × 9 + col) — Fits in &lt; 2 L1 Cache Lines</text>
+<rect x="46" y="98" width="414.0" height="44" rx="5" fill="#1e3a5f" stroke="#38bdf8" stroke-width="1.4"/>
+<text x="253.0" y="117" text-anchor="middle" fill="#e0f2fe" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="12.5" font-weight="700">L1 Cache Line 0 — 64 Bytes (sq 0..63)</text>
+<text x="253.0" y="134" text-anchor="middle" fill="#7dd3fc" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11">a1 (0) ··· e5 Throne (40) ··· b8 (63)</text>
+<rect x="464.0" y="98" width="106.0" height="44" rx="5" fill="#14532d" stroke="#10b981" stroke-width="1.4"/>
+<text x="517.0" y="117" text-anchor="middle" fill="#d1fae5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11.5" font-weight="700">17 B</text>
+<text x="517.0" y="133" text-anchor="middle" fill="#6ee7b7" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="10">sq 64..80</text>
+<rect x="574.0" y="98" width="300.0" height="44" rx="5" fill="#1f2937" stroke="#4b5563" stroke-width="1.2" stroke-dasharray="4,3"/>
+<text x="724.0" y="124" text-anchor="middle" fill="#9ca3af" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11.5">L1 Line 1 Remainder (47 B free)</text>
+<rect x="46.0" y="156" width="88.4" height="24" rx="12" fill="#334155" stroke="#cbd5e1" stroke-opacity="0.45" stroke-width="1"/>
+<text x="90.2" y="172" text-anchor="middle" fill="#cbd5e1" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11" font-weight="600">EMPTY = 0</text>
+<rect x="144.4" y="156" width="88.4" height="24" rx="12" fill="#475569" stroke="#f8fafc" stroke-opacity="0.45" stroke-width="1"/>
+<text x="188.6" y="172" text-anchor="middle" fill="#f8fafc" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11" font-weight="600">WHITE = 1</text>
+<rect x="242.8" y="156" width="88.4" height="24" rx="12" fill="#1e293b" stroke="#94a3b8" stroke-opacity="0.45" stroke-width="1"/>
+<text x="287.0" y="172" text-anchor="middle" fill="#94a3b8" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11" font-weight="600">BLACK = 2</text>
+<rect x="341.2" y="156" width="80.8" height="24" rx="12" fill="#78350f" stroke="#fcd34d" stroke-opacity="0.45" stroke-width="1"/>
+<text x="381.6" y="172" text-anchor="middle" fill="#fcd34d" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11" font-weight="600">KING = 3</text>
+<rect x="432.0" y="156" width="126.4" height="24" rx="12" fill="#451a03" stroke="#f59e0b" stroke-opacity="0.45" stroke-width="1"/>
+<text x="495.2" y="172" text-anchor="middle" fill="#f59e0b" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11" font-weight="600">e5 THRONE = 40</text>
+<rect x="568.4" y="156" width="187.2" height="24" rx="12" fill="#064e3b" stroke="#34d399" stroke-opacity="0.45" stroke-width="1"/>
+<text x="662.0" y="172" text-anchor="middle" fill="#34d399" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11" font-weight="600">O(1) UndoInfo[3] Stack</text>
+<rect x="28" y="212" width="864" height="122" rx="10" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
+<text x="46" y="237" fill="#a78bfa" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700">2. 32-Bit Primitive Move Packing (Move.java) — Zero Heap Objects</text>
+<rect x="46" y="256" width="462.8" height="46" rx="5" fill="#1f2937" stroke="#4b5563" stroke-width="1.2"/>
+<text x="278.9" y="276" text-anchor="middle" fill="#9ca3af" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="12.5" font-weight="700">Unused (18 bits)</text>
+<text x="278.9" y="293" text-anchor="middle" fill="#6b7280" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="10.5">bits 31 .. 14</text>
+<rect x="514.8" y="256" width="177.1" height="46" rx="5" fill="#3b0764" stroke="#a855f7" stroke-width="1.4"/>
+<text x="603.3" y="276" text-anchor="middle" fill="#f3e8ff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="12.5" font-weight="700">To Square (7 bits)</text>
+<text x="603.3" y="293" text-anchor="middle" fill="#d8b4fe" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="10.5">bits 13..7 · (move &gt;&gt;&gt; 7) &amp; 0x7F</text>
+<rect x="696.9" y="256" width="177.1" height="46" rx="5" fill="#0c4a6e" stroke="#38bdf8" stroke-width="1.4"/>
+<text x="785.4" y="276" text-anchor="middle" fill="#e0f2fe" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="12.5" font-weight="700">From Square (7 bits)</text>
+<text x="785.4" y="293" text-anchor="middle" fill="#7dd3fc" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="10.5">bits 6..0 · move &amp; 0x7F</text>
+<text x="46" y="322" fill="#8b949e" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11.2">encode(from, to) = (from &amp; 0x7F) | ((to &amp; 0x7F) &lt;&lt; 7)   ·   NULL_MOVE = 0   ·   Valid range: 0..80 (fits in 7 bits: 0..127)</text>
+<rect x="28" y="350" width="864" height="184" rx="10" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
+<text x="46" y="375" fill="#34d399" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700">3. 64-Bit Transposition Table Entry (tableData) &amp; Hyatt Lockless XOR (VarHandle Opaque)</text>
+<rect x="46.0" y="394" width="307.5" height="50" rx="5" fill="#7c2d12" stroke="#f97316" stroke-width="1.4"/>
+<text x="199.8" y="415" text-anchor="middle" fill="#ffedd5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="12" font-weight="700">Score (signed)</text>
+<text x="199.8" y="433" text-anchor="middle" fill="#ffedd5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="10" opacity="0.85">24 bits · 63..40</text>
+<rect x="357.5" y="394" width="204.0" height="50" rx="5" fill="#1e3a8a" stroke="#3b82f6" stroke-width="1.4"/>
+<text x="459.5" y="415" text-anchor="middle" fill="#dbeafe" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="12" font-weight="700">Best Move</text>
+<text x="459.5" y="433" text-anchor="middle" fill="#dbeafe" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="10" opacity="0.85">16 bits · 39..24</text>
+<rect x="565.5" y="394" width="100.5" height="50" rx="5" fill="#065f46" stroke="#10b981" stroke-width="1.4"/>
+<text x="615.8" y="415" text-anchor="middle" fill="#d1fae5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="12" font-weight="700">Depth</text>
+<text x="615.8" y="433" text-anchor="middle" fill="#d1fae5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="10" opacity="0.85">8b · 23..16</text>
+<rect x="670.0" y="394" width="100.5" height="50" rx="5" fill="#581c87" stroke="#a855f7" stroke-width="1.4"/>
+<text x="720.2" y="415" text-anchor="middle" fill="#f3e8ff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="12" font-weight="700">Flags</text>
+<text x="720.2" y="433" text-anchor="middle" fill="#f3e8ff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="10" opacity="0.85">8b · 15..8</text>
+<rect x="774.5" y="394" width="100.5" height="50" rx="5" fill="#334155" stroke="#94a3b8" stroke-width="1.4"/>
+<text x="824.8" y="415" text-anchor="middle" fill="#f1f5f9" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="12" font-weight="700">Age</text>
+<text x="824.8" y="433" text-anchor="middle" fill="#f1f5f9" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="10" opacity="0.85">8b · 7..0</text>
+<rect x="46" y="460" width="418" height="58" rx="8" fill="#0d1117" stroke="#10b981" stroke-opacity="0.55" stroke-width="1.2"/>
+<text x="60" y="481" fill="#34d399" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700">Lockless XOR Verification (VarHandle Opaque)</text>
+<text x="60" y="502" fill="#e6edf3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11.5">tableLocks[i] = zobristHash ^ tableData[i]</text>
+<rect x="480" y="460" width="394" height="58" rx="8" fill="#0d1117" stroke="#38bdf8" stroke-opacity="0.55" stroke-width="1.2"/>
+<text x="494" y="481" fill="#38bdf8" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700">2-Slot Bucket Hierarchy (2²³ entries · 134 MB RAM)</text>
+<text x="494" y="502" fill="#cbd5e1" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11">Slot 0 (2b): Depth-Preferred  |  Slot 1 (2b+1): Always-Replace</text>
+</svg>

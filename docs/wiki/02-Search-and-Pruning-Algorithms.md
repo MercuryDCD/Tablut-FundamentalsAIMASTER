@@ -35,31 +35,40 @@ Iterative Deepening Search executes consecutive depth passes: $d = 1, 2, 3, \dot
 
 ```mermaid
 flowchart TD
-    A["negamax(node, depth, alpha, beta)"] --> B{"depth <= 0?"}
-    B -- "Yes" --> C["QuiescenceSearch(alpha, beta)"]
-    B -- "No" --> D["Probe Transposition Table"]
-    
-    D --> E{"TT Entry Valid & Depth Sufficient?"}
-    E -- "Yes & Exact/Cutoff" --> F["Return Cached Score / Cutoff"]
-    E -- "No" --> G["Extract TT Best Move (PV Move)"]
-    
-    G --> H["Score Moves (Lazy Move Ordering)"]
-    H --> I["Iterate: selectBest(moveIndex)"]
-    
-    I --> J{"First Move? (PV Candidate)"}
-    J -- "Yes" --> K["Full Window Search: negamax(-beta, -alpha)"]
-    J -- "No" --> L["Scout Search: negamax(-alpha-1, -alpha)"]
-    
-    L --> M{"Scout Score > alpha?"}
-    M -- "Yes (Fail High)" --> N["Re-search Full Window: negamax(-beta, -score)"]
-    M -- "No" --> O["Keep alpha"]
-    
-    K --> P{"score >= beta?"}
+    classDef entry fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
+    classDef tt fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
+    classDef pvs fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
+    classDef qs fill:#3b0764,stroke:#a855f7,color:#f3e8ff,stroke-width:1.5px
+    classDef dec fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
+    classDef cut fill:#7f1d1d,stroke:#ef4444,color:#fee2e2,stroke-width:1.5px
+
+    A["pvs(node, depth, alpha, beta, ply)"]:::entry --> B{"depth <= 0?"}:::dec
+    B -- "Yes" --> C["QuiescenceSearch(alpha, beta)<br/>(Dynamic Delta + King Escape Ext)"]:::qs
+    B -- "No" --> D["Probe 2-Slot Lockless TT<br/>(Slot 0 Depth-Pref -> Slot 1 Fallback)"]:::tt
+
+    D --> E{"TT Hit &amp; Depth >= d?"}:::dec
+    E -- "Exact / Valid Bound" --> F["Return Cached Score / Cutoff"]:::tt
+    E -- "Miss / Shallow" --> G["Score Moves (Lazy MoveOrderer)<br/>&amp; Check Singular Extension (+1 ply)"]:::pvs
+
+    G --> I["selectBest(moveIndex)"]:::pvs
+    I --> J{"First Move?<br/>(PV Candidate)"}:::dec
+    J -- "Yes" --> K["Full Window: -pvs(d-1, -beta, -alpha)"]:::pvs
+    J -- "No" --> LMR{"Late Quiet Move &amp;<br/>King Safe?"}:::dec
+
+    LMR -- "Yes (Reduce R)" --> L1["LMR Null-Window: -pvs(d-1-R, -alpha-1, -alpha)"]:::pvs
+    LMR -- "No (King Guard)" --> L2["Scout Null-Window: -pvs(d-1, -alpha-1, -alpha)"]:::pvs
+
+    L1 --> M{"Score > alpha?"}:::dec
+    L2 --> M
+    M -- "Yes (Fail High)" --> N["Full-Window Re-Search:<br/>-pvs(d-1, -beta, -alpha)"]:::pvs
+    M -- "No" --> O["Keep alpha"]:::entry
+
+    K --> P{"score >= beta?"}:::dec
     N --> P
     O --> P
-    
-    P -- "Yes (Beta Cutoff)" --> Q["Update TT (LOWER_BOUND), Killers, History; Return beta"]
-    P -- "No" --> R["Update alpha = max(alpha, score); Continue Loop"]
+
+    P -- "Yes (Beta Cutoff)" --> Q["Store TT (LOWER, GHI-Safe)<br/>Update Killers &amp; History; Return beta"]:::cut
+    P -- "No" --> R["alpha = max(alpha, score)<br/>Next Move / Store EXACT or UPPER"]:::pvs
 ```
 
 ### 2.1 Principal Variation Search (PVS / NegaScout)

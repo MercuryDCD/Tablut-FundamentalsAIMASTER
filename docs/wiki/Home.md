@@ -10,21 +10,9 @@ The engine is built in zero-allocation Java, targeting execution in restricted t
 
 Ashton Tablut is an asymmetric, medieval Nordic board game played on a $9 \times 9$ grid (81 squares, labeled `a1` to `i9`). The game models a siege where an outnumbered defending garrison protects their King against a surrounding army.
 
-```
-       a   b   c   d   e   f   g   h   i
-    +---+---+---+---+---+---+---+---+---+
-  9 |   |   |   | C | C | C |   |   |   | 9
-  8 |   |   |   |   | C |   |   |   |   | 8
-  7 |   |   |   |   | W |   |   |   |   | 7
-  6 |   |   |   |   | W |   |   |   |   | 6
-  5 | C | C | W | W | K | W | W | C | C | 5  (Throne: e5)
-  4 |   |   |   |   | W |   |   |   |   | 4
-  3 |   |   |   |   | W |   |   |   |   | 3
-  2 |   |   |   |   | C |   |   |   |   | 2
-  1 |   |   |   | C | C | C |   |   |   | 1
-    +---+---+---+---+---+---+---+---+---+
-       a   b   c   d   e   f   g   h   i
-```
+<p align="center">
+  <img src="../assets/ashton_board.svg" alt="Ashton Tablut Official 9x9 Board Topology &amp; Starting Setup" width="100%"/>
+</p>
 
 ### 1.1 The Forces
 * **White (Defenders):** 1 King ($K$) positioned at the center Throne (`e5`) and 8 Soldiers ($W$) guarding the four orthogonal cross-axes (`d5, f5, e4, e6, c5, g5, e3, e7`). White wins by navigating the King to any of the peripheral escape squares.
@@ -79,23 +67,29 @@ The engine relies on a modular, zero-allocation design optimized for cache local
 
 ```mermaid
 flowchart TD
-    A["Referee TCP Stream"] --> B["TablutAgentClient (I/O Layer)"]
-    B --> C["StateAdapter (Bridge)"]
-    B --> TC["TacticalCutoffs (O(1) Instant Mate/Escape Check)"]
-    C --> D["ParallelSearchEngine (Lazy SMP Coordinator)"]
-    
-    subgraph "Decision & Search Pipeline"
-        D --> E{"Opening Book Probe"}
-        E -- "Hit (Turns 1-5)" --> F["Instant D4 Move (<0.01ms, Throne Anchored)"]
-        E -- "Miss" --> G["Iterative Deepening Search (PVS + Singular Extensions + LMR)"]
-        G --> H["MoveOrderer (TT > Win > Capture > Killer > History + Root Score Sort)"]
-        H --> I["FastState (Make / Unmake Mutation)"]
-        I --> J["TranspositionTable (2-Slot Bucket, Hyatt Lockless XOR, 134 MB)"]
-        G --> K["QuiescenceSearch (Tactical Leaf Extension + Full Sort)"]
-        K --> L["HeuristicEvaluation (24 Parameter Weights, Single-Pass Loop Fusion)"]
+    classDef io fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
+    classDef fast fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
+    classDef search fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
+    classDef eval fill:#3b0764,stroke:#a855f7,color:#f3e8ff,stroke-width:1.5px
+    classDef decision fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
+
+    A["Referee TCP Stream<br/>(Port 5800 / 5801)"]:::io --> B["TablutAgentClient<br/>(4-Byte Big-Endian I/O)"]:::io
+    B --> C["StateAdapter<br/>(JSON -> FastState)"]:::io
+    C --> TC["TacticalCutoffs<br/>(O(1) Instant Mate / 2-Ply Fork)"]:::fast
+    TC -- "No Forced Cutoff" --> D["ParallelSearchEngine<br/>(4-vCPU Lazy SMP Coordinator)"]:::search
+
+    subgraph Pipeline["Decision & Search Pipeline"]
+        D --> E{"OpeningBook Probe<br/>(Global D4 Scan)"}:::decision
+        E -- "Hit (Turns 1..6)" --> F["Instant D4 Move<br/>(< 0.01 ms, ε = 0.0)"]:::fast
+        E -- "Miss" --> G["Iterative Deepening Search<br/>(PVS + LMR + Singular Ext)"]:::search
+        G --> H["MoveOrderer<br/>(TT > Win > Capture > Killer > History)"]:::search
+        H --> I["FastState<br/>(byte[81] Make / Unmake)"]:::search
+        I <--> J[("TranspositionTable<br/>2-Slot Bucket · VarHandle XOR · 134 MB")]:::search
+        G --> K["QuiescenceSearch<br/>(Dynamic Delta + Escape Ext)"]:::eval
+        K --> L["HeuristicEvaluation<br/>(24 SPSA Weights · Single-Pass Fusion)"]:::eval
     end
-    
-    TC -- "Forced Mate Detected" --> M["Action Dispatch (Big-Endian Wire Protocol)"]
+
+    TC -- "Forced Win (< 5 ms)" --> M["Action Dispatch &amp; Park Threads (0% CPU)"]:::io
     F --> M
     G --> M
     M --> A
