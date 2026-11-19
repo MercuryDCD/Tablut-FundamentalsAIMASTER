@@ -40,17 +40,19 @@ def main():
     parser = argparse.ArgumentParser(description="Automated 2-Phase Overnight SPSA Training Pipeline")
     parser.add_argument("--warmup-iters", type=int, default=300,
                         help="Iterations for Phase 1 warm-up (default: 300)")
-    parser.add_argument("--warmup-stage", type=str, default="all",
-                        choices=["material", "positional", "micro", "tactical_compound", "all"],
-                        help="Stage to optimize during Phase 1 warm-up (default: all)")
+    parser.add_argument("--warmup-stage", type=str, default="white_focus",
+                        choices=["material", "positional", "micro", "tactical_compound", "white_focus", "all"],
+                        help="Stage to optimize during Phase 1 warm-up (default: white_focus)")
     parser.add_argument("--games-phase1", type=int, default=80,
                         help="Matches per SPSA step in Phase 1 (default: 80)")
     parser.add_argument("--skip-warmup", action="store_true",
                         help="Skip Phase 1 and jump straight to Phase 2 (all parameters at depth 4)")
     parser.add_argument("--fresh", action="store_true",
                         help="Start Phase 1 fresh from DEFAULT_WEIGHTS instead of resuming checkpoint_weights.json")
-    parser.add_argument("--depth", type=int, default=4,
-                        help="Search depth for Phase 2 global fine-tuning (default: 4)")
+    parser.add_argument("--warmup-depth", type=int, default=5,
+                        help="Search depth for Phase 1 warm-up (default: 5; avoids depth 3/4 horizon bias)")
+    parser.add_argument("--depth", type=int, default=6,
+                        help="Search depth for Phase 2 global fine-tuning (default: 6)")
     parser.add_argument("--games-phase2", type=int, default=40,
                         help="Matches per SPSA step in Phase 2 (default: 40)")
     parser.add_argument("--max-iters-phase2", type=int, default=0,
@@ -86,7 +88,7 @@ def main():
     print(f"  Checkpoint File   : {CHECKPOINT_FILE}")
     print(f"  Max Plies / MoveTO: {args.max_plies} plies / {args.timeout_ms} ms")
     print(f"  Freeze Collinear  : {'Enabled' if args.freeze_collinear else 'Disabled'}")
-    print(f"  Phase 1 (Warmup)  : {'SKIPPED' if args.skip_warmup else f'{args.warmup_iters} iters @ Depth 3 ({args.warmup_stage} stage, {args.games_phase1} g/step, fresh={args.fresh})'}")
+    print(f"  Phase 1 (Warmup)  : {'SKIPPED' if args.skip_warmup else f'{args.warmup_iters} iters @ Depth {args.warmup_depth} ({args.warmup_stage} stage, {args.games_phase1} g/step, fresh={args.fresh})'}")
     p2_limit = "Infinite Anytime" if args.max_iters_phase2 <= 0 else f"{args.max_iters_phase2} iters"
     print(f"  Phase 2 (Global)  : {p2_limit} @ Depth {args.depth} ({args.games_phase2} games/step)")
     print(f"  Auto-Apply Final  : {'Enabled' if args.auto_apply else 'Disabled'}")
@@ -108,7 +110,7 @@ def main():
         sys.executable, str(SPSA_SCRIPT),
         "--warm-restart",
         "--stage", args.warmup_stage,
-        "--depth", "3",
+        "--depth", str(args.warmup_depth),
         "--games", str(args.games_phase1),
         "--max-iterations", str(args.warmup_iters),
         *common_flags
@@ -161,7 +163,7 @@ def main():
     if not args.skip_warmup:
         print("\n" + "#" * 80)
         print("  STARTING PHASE 1: WARM-UP & ACCLIMATIZATION OF NEW WEIGHTS")
-        print(f"  Stage: {args.warmup_stage} | Depth: 3 | Iters: {args.warmup_iters} | N: {args.games_phase1}")
+        print(f"  Stage: {args.warmup_stage} | Depth: {args.warmup_depth} | Iters: {args.warmup_iters} | N: {args.games_phase1}")
         print("#" * 80 + "\n")
         start_t1 = time.time()
         active_proc = subprocess.Popen(cmd_phase1)
@@ -178,7 +180,7 @@ def main():
 
         elapsed_p1 = int(time.time() - start_t1)
         print(f"\n[+] Phase 1 finished successfully in {elapsed_p1}s.")
-        print("[*] Transitioning to Phase 2: Global Fine-Tuning at Depth 4...")
+        print(f"[*] Transitioning to Phase 2: Global Fine-Tuning at Depth {args.depth}...")
         time.sleep(2)
 
     # --- PHASE 2 EXECUTION ---

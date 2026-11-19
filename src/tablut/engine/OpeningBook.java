@@ -512,5 +512,27 @@ public final class OpeningBook {
         addLine(new String[] {
             "e4d4", "i4e4", "d4d2", "f1f4", "d2d3", "b5b7"
         }, 120, 4);
+
+        // Line 29: White counter-system vs Luca NNUE's 1... e2 -> g2 response after 1. e7 -> f7.
+        // Uses startPly = uciMoves.length - 1 on even plies (2, 4, 6) so ONLY White book moves
+        // are recorded and Black's opening book repertoire remains 100% untouched.
+        addLine(new String[] {
+            "e7f7", "e2g2", "e6c6"
+        }, 135, 2);
+        addLine(new String[] {
+            "e7f7", "e2g2", "e6c6", "b5b3", "d5d6"
+        }, 145, 4);
+        addLine(new String[] {
+            "e7f7", "e2g2", "e6c6", "h5h7", "d5d6"
+        }, 145, 4);
+        addLine(new String[] {
+            "e7f7", "e2g2", "e6c6", "e8c8", "f5f4"
+        }, 145, 4);
+        addLine(new String[] {
+            "e7f7", "e2g2", "f5f3", "b5b3", "e6c6"
+        }, 145, 4);
+        addLine(new String[] {
+            "e7f7", "e2g2", "e6c6", "b5b3", "d5d6", "h5h7", "f5f4"
+        }, 155, 6);
     }
 }

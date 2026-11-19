@@ -60,11 +60,11 @@ WEIGHT_NAMES = [
 DEFAULT_WEIGHTS = [
     320,    # whitePiece (Phase 16/17 Champion Anchor)
     107,    # blackCaptured (FROZEN: collinear with blackPiece)
-    35,     # kingDistance
+    48,     # kingDistance
     1333,   # kingSingleEscape
     18590,  # kingDoubleEscape
-    39,     # diamondOccupancy
-    15,     # kingMobility
+    52,     # diamondOccupancy
+    22,     # kingMobility
     79,     # kingVulnerabilityPenalty
     99,     # blackPiece
     198,    # whiteCaptured (FROZEN: collinear with whitePiece)
@@ -76,11 +76,11 @@ DEFAULT_WEIGHTS = [
     13,     # blackConnectedChains
     11,     # kingOpenFieldContainment
     16,     # kingDefenderShieldCohesion
-    7,      # whitePawnDispersionPenalty
+    4,      # whitePawnDispersionPenalty
     37,     # campPinchTraps
     30,     # throneAnvilThreats
-    350,    # kingSafeForkThreat
-    450,    # kingThroneAbandonPenalty
+    480,    # kingSafeForkThreat
+    140,    # kingThroneAbandonPenalty
     31      # campPerimeterIntegrityPenalty
 ]
 
@@ -91,7 +91,7 @@ DEFAULT_WEIGHTS = [
 COLLINEAR_INDICES = {1, 9, 13}
 
 BOUNDS = [
-    (220, 400),     # whitePiece
+    (240, 340),     # whitePiece (bounded so initial whiteBias stays < 0 for contempt invariant)
     (20, 250),      # blackCaptured
     (10, 100),      # kingDistance
     (600, 3500),    # kingSingleEscape
@@ -99,7 +99,7 @@ BOUNDS = [
     (20, 120),      # diamondOccupancy
     (4, 60),        # kingMobility
     (40, 250),      # kingVulnerabilityPenalty
-    (50, 200),      # blackPiece
+    (75, 160),      # blackPiece
     (80, 450),      # whiteCaptured
     (35, 160),      # rhombusBlockade
     (25, 180),      # campFrontPreserved
@@ -109,11 +109,11 @@ BOUNDS = [
     (0, 60),        # blackConnectedChains
     (2, 60),        # kingOpenFieldContainment
     (5, 80),        # kingDefenderShieldCohesion
-    (2, 30),        # whitePawnDispersionPenalty
+    (1, 20),        # whitePawnDispersionPenalty
     (10, 120),      # campPinchTraps
     (10, 120),      # throneAnvilThreats
     (200, 3500),    # kingSafeForkThreat
-    (150, 1200),    # kingThroneAbandonPenalty
+    (40, 400),      # kingThroneAbandonPenalty
     (15, 65)        # campPerimeterIntegrityPenalty
 ]
 
@@ -131,17 +131,17 @@ SCALES = [
     15.0,   # whiteCaptured
     10.0,   # rhombusBlockade
     8.0,    # campFrontPreserved
-    20.0,   # kingSurroundedThrone
+    12.0,   # kingSurroundedThrone
     4.0,    # kingContainment
     1.0,    # blackMobility
-    4.0,    # blackConnectedChains
+    3.0,    # blackConnectedChains
     3.0,    # kingOpenFieldContainment
     4.0,    # kingDefenderShieldCohesion
-    3.0,    # whitePawnDispersionPenalty
+    1.5,    # whitePawnDispersionPenalty
     5.0,    # campPinchTraps
     5.0,    # throneAnvilThreats
-    150.0,  # kingSafeForkThreat
-    40.0,   # kingThroneAbandonPenalty
+    100.0,  # kingSafeForkThreat
+    25.0,   # kingThroneAbandonPenalty
     8.0     # campPerimeterIntegrityPenalty
 ]
 
@@ -166,6 +166,11 @@ STAGES = {
         "name": "Stage 4: Asymmetric Shield & Compound Spatial Features (Phase 12/13/14)",
         "description": "Shield cohesion, dispersion penalty, camp pinch traps, throne anvils, proactive 2-step escape forks, throne abandon, perimeter integrity",
         "indices": [17, 18, 19, 20, 21, 22, 23]
+    },
+    "white_focus": {
+        "name": "Stage 4b: White Initiative & King Escape Calibration (Black Frozen)",
+        "description": "Calibrates White material, king distance, escape corridors, diamond, mobility, shield, dispersion, safe forks, and throne abandon while keeping all Black weights strictly frozen",
+        "indices": [0, 2, 3, 4, 5, 6, 7, 17, 18, 21, 22]
     },
     "all": {
         "name": "Stage 5: Joint Fine-Tuning (All 24 Parameters)",
@@ -204,6 +209,7 @@ def save_checkpoint(iteration, total_games, active_w, best_w, winrate_plus, dept
     if ema_w is not None:
         checkpoint_data["ema_weights"] = [int(round(x)) for x in ema_w]
         checkpoint_data["ema_weights_dict"] = {WEIGHT_NAMES[i]: int(round(ema_w[i])) for i in range(len(WEIGHT_NAMES))}
+    CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = CHECKPOINT_FILE.with_suffix(".tmp")
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(checkpoint_data, f, indent=2)
@@ -266,7 +272,11 @@ def main():
     parser.add_argument("--threads", type=int, default=os.cpu_count() or 4, help="Worker threads for simulation")
     parser.add_argument("--depth", type=int, default=3, help="Search depth per move (default: 3)")
     parser.add_argument("--resume", action="store_true", help="Resume from checkpoint_weights.json if present")
+    parser.add_argument("--checkpoint", type=str, default="checkpoint_weights.json",
+                        help="Checkpoint JSON path for reading/saving weights (default: checkpoint_weights.json)")
     parser.add_argument("--max-iterations", type=int, default=0, help="Stop after N iterations (0 = infinite anytime)")
+    parser.add_argument("--max-minutes", type=float, default=0.0,
+                        help="Stop gracefully after M elapsed minutes (0 = disabled)")
     parser.add_argument("--learning-rate", type=float, default=8.0, help="SPSA learning rate parameter 'a' (default: 8.0)")
     parser.add_argument("--perturbation", type=float, default=1.0, help="SPSA perturbation step parameter 'c' (default: 1.0)")
     parser.add_argument("--warm-restart", action="store_true",
@@ -290,6 +300,9 @@ def main():
     parser.add_argument("--auto-apply", action="store_true",
                         help="Automatically apply best weights and recompile engine binaries upon stopping/completion")
     args = parser.parse_args()
+
+    global CHECKPOINT_FILE
+    CHECKPOINT_FILE = Path(args.checkpoint)
 
     # Ensure even number of games for color balance
     if args.games % 2 != 0:
@@ -346,7 +359,7 @@ def main():
             print(f"[*] Resumed from checkpoint (Previous stage: {prev_stage}, Cycle: {resumed_cycle}): Iteration {start_iteration}, {total_games} total games.")
     elif CHECKPOINT_FILE.exists():
         # Preserve any prior checkpoint safely without touching phase14 backup
-        pre_backup = Path("checkpoint_weights.pre_session_backup.json")
+        pre_backup = CHECKPOINT_FILE.with_suffix(".pre_session_backup.json")
         pre_backup.write_bytes(CHECKPOINT_FILE.read_bytes())
         print(f"[*] Fresh SPSA run: backed up existing checkpoint to {pre_backup.name}")
 
@@ -416,10 +429,13 @@ def main():
         wr = gate_res.get("winrateA", 0.5)
         w_w = gate_res.get("winsAWhite", 0)
         b_w = gate_res.get("winsABlack", 0)
-        promoted = wr >= 0.52
-        tag = "PROMOTED" if promoted else "KEPT INCUMBENT"
+        total_black_wins = gate_res.get("winsBlack", 0)
+        b_b = max(0, total_black_wins - b_w)
+        black_ok = (b_w + 1 >= b_b)
+        promoted = (wr >= 0.52) and black_ok
+        tag = "PROMOTED" if promoted else ("REJECTED (BLACK REGRESSION)" if wr >= 0.52 else "KEPT INCUMBENT")
         print(f"  [GATE @ Iter {iter_num:4d}] EMA vs Best ({args.eval_games} CRN games): "
-              f"WinRate={wr*100:5.1f}% (winsAWhite={w_w}, winsABlack={b_w}) -> {tag}")
+              f"WinRate={wr*100:5.1f}% (winsAWhite={w_w}, winsABlack={b_w} vs incBlack={b_b}) -> {tag}")
         return promoted, (cand_clamped if promoted else incumbent_w)
 
     iteration = start_iteration
@@ -535,6 +551,9 @@ def main():
         if args.max_iterations > 0 and session_iter >= args.max_iterations:
             print(f"\n[+] Reached session iteration limit ({args.max_iterations} iters, global: {iteration}). Optimization complete.")
             break
+        if args.max_minutes > 0.0 and total_elapsed >= args.max_minutes * 60.0:
+            print(f"\n[+] Reached session time limit ({args.max_minutes:.1f} min, global iter: {iteration}). Optimization complete.")
+            break
 
     # Final validation gate before closing if session ran steps not just evaluated
     if args.eval_interval > 0 and (iteration - start_iteration) > 0 and ((iteration - start_iteration) % args.eval_interval != 0) and not interrupted:
@@ -559,7 +578,7 @@ def main():
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         print("\n[*] Auto-apply enabled: Ingesting best weights into HeuristicWeights.java and recompiling...")
         apply_script = Path(__file__).parent / "apply_weights.py"
-        res = subprocess.run([sys.executable, str(apply_script)])
+        res = subprocess.run([sys.executable, str(apply_script), "--checkpoint", str(CHECKPOINT_FILE)])
         if res.returncode == 0:
             print("[+] Successfully updated HeuristicWeights.java and recompiled engine binaries.")
         else:

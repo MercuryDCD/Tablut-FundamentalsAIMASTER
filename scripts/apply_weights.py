@@ -136,6 +136,7 @@ def main():
     java_files = sorted(str(p) for p in Path("src/tablut/engine").glob("*.java"))
     compile_cmd = [
         "javac",
+        "-encoding", "UTF-8",
         "-cp", f"TablutCompetition-master/Tablut/Executables/Server.jar{sep}TablutCompetition-master/Tablut/lib/*",
         "-d", "bin",
     ] + java_files

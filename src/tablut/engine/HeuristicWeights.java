@@ -25,80 +25,80 @@ public final class HeuristicWeights {
 
     // --- White Evaluation Weights ---
     // Weight index 0: Material value per alive White soldier
-    public int whitePiece = 320;
+    public int whitePiece = 316;
 
     // Weight index 1: Material value per captured Black attacker
     public int blackCaptured = 107;
 
     // Weight index 2: Distance penalty per step King is away from perimeter escapes
-    public int kingDistance = 35;
+    public int kingDistance = 49;
 
     // Weight index 3: Bonus for 1 open orthogonal escape corridor to perimeter
-    public int kingSingleEscape = 1333;
+    public int kingSingleEscape = 1342;
 
     // Weight index 4: Massive bonus for 2+ independent open escape corridors (unblockable 2-way fork)
-    public int kingDoubleEscape = 18590;
+    public int kingDoubleEscape = 18905;
 
     // Weight index 5: Bonus per White soldier occupying diamond/windmill squares {d3, f4, d6, f7}
-    public int diamondOccupancy = 39;
+    public int diamondOccupancy = 51;
 
     // Weight index 6: Bonus per legal square King can reach in one move
-    public int kingMobility = 15;
+    public int kingMobility = 22;
 
     // Weight index 7: Penalty when King is vulnerable to immediate custodian capture
-    public int kingVulnerabilityPenalty = 79;
+    public int kingVulnerabilityPenalty = 73;
 
     // --- Black Evaluation Weights ---
     // Weight index 8: Material value per alive Black soldier
-    public int blackPiece = 99;
+    public int blackPiece = 98;
 
     // Weight index 9: Material value per captured White defender (attrition priority)
     public int whiteCaptured = 198;
 
     // Weight index 10: Bonus per Black soldier on the 8 rhombus squares {c2, g2, b3, h3, b7, h7, c8, g8}
-    public int rhombusBlockade = 55;
+    public int rhombusBlockade = 56;
 
     // Weight index 11: Bonus per camp doorway preserved {e2, e8, b5, h5} ("Keep the Fronts")
-    public int campFrontPreserved = 69;
+    public int campFrontPreserved = 70;
 
     // Weight index 12: Bonus per hostile piece directly adjacent to King on/near Throne
-    public int kingSurroundedThrone = 50;
+    public int kingSurroundedThrone = 47;
 
     // Weight index 13: Bonus for keeping King contained close to the central Throne
     public int kingContainment = 39;
 
     // Weight index 14: Mobility bonus for active Black soldiers
-    public int blackMobility = 9;
+    public int blackMobility = 10;
 
     // Weight index 15: Bonus for connected blockade chains (orthogonal & diagonal soldier links)
-    public int blackConnectedChains = 13;
+    public int blackConnectedChains = 14;
 
     // Weight index 16: Bonus for swarming escaping King in open field (distFromCenter >= 2)
-    public int kingOpenFieldContainment = 11;
+    public int kingOpenFieldContainment = 12;
 
     // --- Phase 12 Asymmetric Shield & Compound Spatial Features ---
     // Weight index 17: Bonus for White pawns forming protective shield within Chebyshev dist 1-2 of King
-    public int kingDefenderShieldCohesion = 16;
+    public int kingDefenderShieldCohesion = 18;
 
     // Weight index 18: Non-linear quadratic penalty for White pawns dispersed > 3 Manhattan steps from King
-    public int whitePawnDispersionPenalty = 7;
+    public int whitePawnDispersionPenalty = 5;
 
     // Weight index 19: Tactical bonus for Black threatening active camp-wall pinch traps against White defenders
-    public int campPinchTraps = 37;
+    public int campPinchTraps = 39;
 
     // Weight index 20: Tactical bonus for active line-of-sight threats using empty Throne as capture anvil
-    public int throneAnvilThreats = 30;
+    public int throneAnvilThreats = 29;
 
     // --- Phase 13 Proactive Escape & Tactical Refinements ---
     // Weight index 21: Proactive bonus for King threatening an unblockable 2-step escape fork (SAFE_FORKS)
-    public int kingSafeForkThreat = 350;
+    public int kingSafeForkThreat = 447;
 
     // --- Phase 14 Post-Autopsy Tactical Hardening (P1 & P4) ---
     // Weight index 22: Severe penalty when White King abandons Throne e5 without open escape corridors or safe forks
-    public int kingThroneAbandonPenalty = 450;
+    public int kingThroneAbandonPenalty = 146;
 
     // Weight index 23: Penalty for Black abandoning the 8 outer camp corners when White threatens that sector
-    public int campPerimeterIntegrityPenalty = 31;
+    public int campPerimeterIntegrityPenalty = 29;
 
     public HeuristicWeights() {
         // Defaults initialized above
@@ -231,31 +231,31 @@ public final class HeuristicWeights {
      * Resets all parameters to default literature-calibrated values.
      */
     public void resetToDefaults() {
-        this.whitePiece = 320;
-        this.blackPiece = 99;
+        this.whitePiece = 316;
+        this.blackPiece = 98;
         this.blackCaptured = 107;
         this.whiteCaptured = 198;
-        this.kingDistance = 35;
-        this.kingSingleEscape = 1333;
-        this.kingDoubleEscape = 18590;
-        this.diamondOccupancy = 39;
-        this.kingMobility = 15;
-        this.kingVulnerabilityPenalty = 79;
+        this.kingDistance = 49;
+        this.kingSingleEscape = 1342;
+        this.kingDoubleEscape = 18905;
+        this.diamondOccupancy = 51;
+        this.kingMobility = 22;
+        this.kingVulnerabilityPenalty = 73;
 
-        this.rhombusBlockade = 55;
-        this.campFrontPreserved = 69;
-        this.kingSurroundedThrone = 50;
+        this.rhombusBlockade = 56;
+        this.campFrontPreserved = 70;
+        this.kingSurroundedThrone = 47;
         this.kingContainment = 39;
-        this.blackMobility = 9;
-        this.blackConnectedChains = 13;
-        this.kingOpenFieldContainment = 11;
+        this.blackMobility = 10;
+        this.blackConnectedChains = 14;
+        this.kingOpenFieldContainment = 12;
 
-        this.kingDefenderShieldCohesion = 16;
-        this.whitePawnDispersionPenalty = 7;
-        this.campPinchTraps = 37;
-        this.throneAnvilThreats = 30;
-        this.kingSafeForkThreat = 350;
-        this.kingThroneAbandonPenalty = 450;
-        this.campPerimeterIntegrityPenalty = 31;
+        this.kingDefenderShieldCohesion = 18;
+        this.whitePawnDispersionPenalty = 5;
+        this.campPinchTraps = 39;
+        this.throneAnvilThreats = 29;
+        this.kingSafeForkThreat = 447;
+        this.kingThroneAbandonPenalty = 146;
+        this.campPerimeterIntegrityPenalty = 29;
     }
 }

@@ -49,6 +49,9 @@ __pycache__/
 # Visual Studio Code
 .vscode/
 
+# Local private notes
+GEMINI.md
+
 # OS specific files
 .DS_Store
 Thumbs.db

@@ -51,46 +51,52 @@ echo "[3/6] Compiling Java Bytecode into bin/..."
 rm -rf bin
 mkdir -p bin
 CLASSPATH="TablutCompetition-master/Tablut/Executables/Server.jar:TablutCompetition-master/Tablut/lib/*"
-javac -cp "$CLASSPATH" -d bin src/tablut/engine/*.java
+javac -encoding UTF-8 -cp "$CLASSPATH" -d bin src/tablut/engine/*.java
 if [ ! -f "bin/tablut/engine/TablutAgentClient.class" ]; then
     echo "[-] ERROR: Compilation failed. TablutAgentClient.class not found."
     exit 1
 fi
 echo "  -> Compilation successful. Verified bytecode in bin/."
 
-# 4. Verify runmyplayer.sh
-echo "[4/6] Verifying runmyplayer.sh permissions and line endings..."
+# 4. Verify runmyplayer.sh and VM helper scripts
+echo "[4/6] Verifying shell script permissions and line endings..."
 if [ ! -f "runmyplayer.sh" ]; then
     echo "[-] ERROR: runmyplayer.sh does not exist in root directory!"
     exit 1
 fi
-chmod +x runmyplayer.sh
-if grep -q $'\r' runmyplayer.sh; then
-    echo "  -> Detected Windows CRLF in runmyplayer.sh. Sanitizing to POSIX LF..."
-    sed -i -e 's/\r$//' runmyplayer.sh
-fi
-echo "  -> runmyplayer.sh is executable and formatted with Unix LF."
+for shf in runmyplayer.sh scripts/verify_vm.sh scripts/clean_vm.sh; do
+    if [ -f "$shf" ]; then
+        chmod +x "$shf"
+        if grep -q $'\r' "$shf"; then
+            echo "  -> Detected Windows CRLF in $shf. Sanitizing to POSIX LF..."
+            sed -i -e 's/\r$//' "$shf"
+        fi
+    fi
+done
+echo "  -> Shell scripts are executable and formatted with Unix LF."
 
 # 5. Execute Core Test Battery
-echo "[5/6] Running Test Battery (Rules, Perft, Opening Book, Phase 15 Engine)..."
+echo "[5/6] Running Test Battery (Rules, Perft, Search, TT, Opening Book, Phase 15-16)..."
 CP="bin:$CLASSPATH"
 
-echo "  -> Running RuleVerificationTest..."
-java -cp "$CP" tablut.engine.RuleVerificationTest >/dev/null
+for tc in \
+    RuleVerificationTest \
+    PerftTest \
+    TranspositionTableTest \
+    SearchEngineTest \
+    ParallelSearchEngineTest \
+    OpeningBookTest \
+    Phase15FinalOptimizationsTest \
+    Phase16RecalibrationTest
+do
+    echo "  -> Running $tc..."
+    java -cp "$CP" "tablut.engine.$tc" >/dev/null
+done
 
-echo "  -> Running PerftTest..."
-java -cp "$CP" tablut.engine.PerftTest >/dev/null
+echo "  -> All 8 test suites PASSED with 0 errors."
 
-echo "  -> Running OpeningBookTest..."
-java -cp "$CP" tablut.engine.OpeningBookTest >/dev/null
-
-echo "  -> Running Phase15FinalOptimizationsTest..."
-java -cp "$CP" tablut.engine.Phase15FinalOptimizationsTest >/dev/null
-
-echo "  -> All test suites PASSED with 0 errors."
-
-# 6. Smoke Match vs RandomPlayer
-echo "[6/6] Running Local Referee Match vs RandomPlayer (10s timeout)..."
+# 6. Smoke Match vs RandomPlayer (invoked from /tmp with mixed-case role)
+echo "[6/6] Running Local Referee Match vs RandomPlayer (10s timeout, role=wHitE)..."
 SERVER_JAR="TablutCompetition-master/Tablut/Executables/Server.jar"
 RANDOM_JAR="TablutCompetition-master/Tablut/Executables/RandomPlayer.jar"
 
@@ -105,8 +111,8 @@ java -jar "$SERVER_JAR" -t 10 > "$TEST_SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 sleep 2
 
-# Start White (DajeGeppetto)
-./runmyplayer.sh WHITE 10 127.0.0.1 > "$TEST_WHITE_LOG" 2>&1 &
+# Start White (DajeGeppetto) from /tmp to verify absolute path resolution & case-insensitive role
+(cd /tmp && "$BASE_DIR/runmyplayer.sh" wHitE 10 127.0.0.1) > "$TEST_WHITE_LOG" 2>&1 &
 WHITE_PID=$!
 sleep 1
 

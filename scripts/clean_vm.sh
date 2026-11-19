@@ -27,18 +27,22 @@ echo "[1/5] Building clean production bytecode into bin/..."
 rm -rf bin
 mkdir -p bin
 CLASSPATH="TablutCompetition-master/Tablut/Executables/Server.jar:TablutCompetition-master/Tablut/lib/*"
-javac -cp "$CLASSPATH" -d bin src/tablut/engine/*.java
+javac -encoding UTF-8 -cp "$CLASSPATH" -d bin src/tablut/engine/*.java
 echo "  -> Production bytecode generated successfully."
 
-# 2. Ensure runmyplayer.sh permissions & line endings
-echo "[2/5] Sanitizing runmyplayer.sh..."
-chmod +x runmyplayer.sh
-sed -i -e 's/\r$//' runmyplayer.sh
-echo "  -> runmyplayer.sh is executable with Unix LF."
+# 2. Ensure shell script permissions & line endings
+echo "[2/5] Sanitizing shell scripts..."
+for shf in runmyplayer.sh scripts/verify_vm.sh scripts/clean_vm.sh; do
+    if [ -f "$shf" ]; then
+        chmod +x "$shf"
+        sed -i -e 's/\r$//' "$shf"
+    fi
+done
+echo "  -> Shell scripts are executable with Unix LF."
 
 # 3. Remove application logs and temporary files
 echo "[3/5] Purging runtime logs, scratch directories, and pycache..."
-rm -rf logs/* scratch/*
+rm -rf logs/* scratch/* bin_prev temp_prev* garbage *.log feature_matrix.csv *.ova
 mkdir -p logs
 find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 find . -type f -name "*.pyc" -delete 2>/dev/null || true

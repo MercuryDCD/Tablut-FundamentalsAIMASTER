@@ -23,37 +23,37 @@ The heuristic engine evaluates 24 parameterized terms stored in `HeuristicWeight
 
 ### 2.1 White Evaluation Terms (`WhiteHeuristics.java`)
 
-| Parameter | Calibrated Weight | Description & Algorithmic Formulation |
+| Parameter | Calibrated Weight (Phase 17 SPSA) | Description & Algorithmic Formulation |
 | :--- | :---: | :--- |
-| `whitePiece` | `320` | Material value per active White defender (rebalanced to 2.5:1 ratio vs Black, eliminating the Draw Attraction Trap). |
+| `whitePiece` | `316` | Material value per active White defender (rebalanced ratio vs Black, eliminating the Draw Attraction Trap). |
 | `blackCaptured` | `107` | Bonus per eliminated Black attacker ($16 - \text{blackCount}$). |
-| `kingDistance` | `35` | Penalty per step between the King and the nearest perimeter escape square: `MIN_DISTANCE_TO_ESCAPE[kingSq] * kingDistance`. |
-| `kingSingleEscape` | `1333` | Bonus awarded when the King has exactly 1 unblocked orthogonal ray to a perimeter escape square. |
-| `kingDoubleEscape` | `18590` | Decisive bonus awarded when the King possesses $\ge 2$ unblocked escape rays (an unstoppable fork). |
-| `diamondOccupancy` | `39` | Bonus for White soldiers occupying central diamond formations ($D_1$: `d3, f4, d6, f7`; $D_2$: `f3, d4, f6, d7`). |
-| `kingMobility` | `15` | Bonus per legal orthogonal square the King can slide to from his current position. |
-| `kingVulnerabilityPenalty` | `79` | Penalty incurred when the King is adjacent to hostile entities without counter-protection (`PROTECTION_KING` counter-flank offset). |
-| `kingDefenderShieldCohesion` | `16` | Bonus for White defenders forming an escort shield within Chebyshev distance 1–2 of the King. |
-| `whitePawnDispersionPenalty` | `7` | Non-linear quadratic penalty for White defenders dispersed $> 3$ Manhattan steps away from the King. |
-| `kingSafeForkThreat` | `350` | Proactive bonus for positions where the King can slide in 1 move to a safe square opening $\ge 2$ escape corridors (`SAFE_FORKS`). |
-| `kingThroneAbandonPenalty` | `450` | Penalty when White King abandons Throne (`e5`) without open escape corridors or safe forks. |
+| `kingDistance` | `49` | Penalty per step between the King and the nearest perimeter escape square: `MIN_DISTANCE_TO_ESCAPE[kingSq] * kingDistance`. |
+| `kingSingleEscape` | `1342` | Bonus awarded when the King has exactly 1 unblocked orthogonal ray to a perimeter escape square. |
+| `kingDoubleEscape` | `18905` | Decisive bonus awarded when the King possesses $\ge 2$ unblocked escape rays (an unstoppable fork). |
+| `diamondOccupancy` | `51` | Bonus for White soldiers occupying central diamond formations ($D_1$: `d3, f4, d6, f7`; $D_2$: `f3, d4, f6, d7`). |
+| `kingMobility` | `22` | Bonus per legal orthogonal square the King can slide to from his current position. |
+| `kingVulnerabilityPenalty` | `73` | Penalty incurred when the King is adjacent to hostile entities without counter-protection (`PROTECTION_KING` counter-flank offset). |
+| `kingDefenderShieldCohesion` | `18` | Bonus for White defenders forming an escort shield within Chebyshev distance 1–2 of the King. |
+| `whitePawnDispersionPenalty` | `5` | Non-linear quadratic penalty for White defenders dispersed $> 3$ Manhattan steps away from the King (exempting active Rhombus-contest squares). |
+| `kingSafeForkThreat` | `447` | Proactive bonus for positions where the King can slide in 1 move to a safe square opening $\ge 2$ escape corridors (`SAFE_FORKS`). |
+| `kingThroneAbandonPenalty` | `146` | Graduated penalty when White King abandons Throne (`e5`) without unblocked escapes (`full` if 0 open corridors, `50%` if 1 open corridor). |
 
 ### 2.2 Black Evaluation Terms (`BlackHeuristics.java`)
 
-| Parameter | Calibrated Weight | Description & Algorithmic Formulation |
+| Parameter | Calibrated Weight (Phase 17 SPSA) | Description & Algorithmic Formulation |
 | :--- | :---: | :--- |
-| `blackPiece` | `99` | Value per active Black attacker on the board. |
+| `blackPiece` | `98` | Value per active Black attacker on the board. |
 | `whiteCaptured` | `198` | Bonus per eliminated White defender ($8 - \text{whiteCount}$), reflecting attrition priority. |
-| `rhombusBlockade` | `55` | Bonus per Black soldier occupying the 8-point Rhombus ring (`c2, g2, b3, h3, b7, h7, c8, g8`), attenuated in endgames and scaled on closure. |
-| `campFrontPreserved` | `69` | Bonus per preserved camp doorway square (`e2, e8, b5, h5`) ("Keep the Fronts"). |
-| `kingSurroundedThrone` | `50` | Bonus per hostile flanker surrounding the King while he is on or adjacent to the Throne. |
+| `rhombusBlockade` | `56` | Bonus per Black soldier occupying the 8-point Rhombus ring (`c2, g2, b3, h3, b7, h7, c8, g8`), attenuated by 50% in endgames (`blackCount < 10`) and scaled on closure ($\ge 7$). |
+| `campFrontPreserved` | `70` | Bonus per preserved camp doorway square (`e2, e8, b5, h5`) ("Keep the Fronts"). |
+| `kingSurroundedThrone` | `47` | Bonus per hostile flanker surrounding the King while he is on or adjacent to the Throne. |
 | `kingContainment` | `39` | Positional bonus rewarding Black for confining the King near the center of the board. |
-| `blackMobility` | `9` | Bonus per legal sliding move available across all active Black soldiers. |
-| `blackConnectedChains` | `13` | Bonus per adjacent pair of Black soldiers (orthogonal and diagonal links), forming cohesive walls. |
-| `kingOpenFieldContainment` | `11` | Swarm bonus attracting Black soldiers toward the King once the King escapes into the open field ($d(\text{King}, \text{Throne}) \ge 2$). |
-| `campPinchTraps` | `37` | Tactical bonus for Black threatening active custodian pinches against White defenders adjacent to camp borders. |
-| `throneAnvilThreats` | `30` | Tactical bonus for active line-of-sight threats using the vacated center Throne (`e5`) as a capture anvil. |
-| `campPerimeterIntegrityPenalty` | `31` | Penalty for Black abandoning the 8 outer camp corners when White threatens that board quadrant. |
+| `blackMobility` | `10` | Bonus per legal sliding move available across all active Black soldiers. |
+| `blackConnectedChains` | `14` | Bonus per adjacent pair of Black soldiers (orthogonal and diagonal links), forming cohesive walls. |
+| `kingOpenFieldContainment` | `12` | Swarm bonus attracting Black soldiers toward the King once the King escapes into the open field ($d(\text{King}, \text{Throne}) \ge 2$). |
+| `campPinchTraps` | `39` | Tactical bonus for Black threatening active custodian pinches against White defenders adjacent to camp borders. |
+| `throneAnvilThreats` | `29` | Tactical bonus for active line-of-sight threats using the vacated center Throne (`e5`) as a capture anvil. |
+| `campPerimeterIntegrityPenalty` | `29` | Penalty for Black abandoning the 8 outer camp corners when White threatens that board quadrant. |
 
 ---
 
@@ -106,31 +106,34 @@ Evaluating static 1-step escape rays is insufficient: by the time White creates 
 * Identifies intermediate destination squares $S$ reachable by the King in 1 legal slide.
 * Checks whether landing on $S$ creates $\ge 2$ unblocked orthogonal rays to perimeter escapes.
 * Verifies tactical safety via `isSafeForkSquare`: confirms that $S$ is not capturable by Black on the immediate reply ply.
-* Awards a major tactical bonus (`kingSafeForkThreat = 2800`), steering White search branches toward positions that set up unstoppable 2-way forks on the following turn.
+* Awards a major tactical bonus (`kingSafeForkThreat = 447` after Depth-5/6 SPSA calibration), steering White search branches toward positions that set up unstoppable 2-way forks on the following turn.
 
-### 3.5 Defender Shield Cohesion & Quadratic Dispersion Penalty
+### 3.5 Defender Shield Cohesion, Dispersion & Rhombus-Contest Exemption
 In human expert play and champion engines, White defenders do not wander across the board: they form a tight protective escort around the King.
 * **Shield Cohesion (`kingDefenderShieldCohesion`):** Awards a bonus for each White defender situated within Chebyshev distance $\le 2$ of the King ($\max(|r_w - r_k|, |c_w - c_k|) \le 2$).
-* **Quadratic Dispersion Penalty (`whitePawnDispersionPenalty`):** When White defenders disperse beyond 3 Manhattan steps from the King ($d > 3$), they become liabilities that Black can capture or bypass. The penalty scales quadratically:
+* **Quadratic Dispersion Penalty & Rhombus-Contest Exemption (`whitePawnDispersionPenalty`):** When White defenders disperse beyond 3 Manhattan steps from the King ($d > 3$), they become liabilities that Black can capture or bypass. The penalty scales quadratically:
 
 $$\text{DispersionPenalty} = \sum_{w \in \text{WhitePawns}, \, d(w, K) > 3} (d_{\text{Manhattan}}(w, K) - 3)^2 \times \text{whitePawnDispersionPenalty}$$
+
+  Stranded perimeter defenders (`r <= 1`, `r >= 7`, `c <= 1`, `c >= 7`) incur an additional anti-stranding penalty (`+8`, plus `+6` if obstructing a King win square). In Phase 17, `WhiteHeuristics.isRhombusContestSquare(r, c)` exempts the 8 strategic Rhombus squares (`c2, g2, b3, h3, b7, h7, c8, g8`) from the `+8` perimeter penalty so White soldiers can actively contest and break Black's outer ring.
+* **Graduated Throne-Abandon Penalty (`kingThroneAbandonPenalty`):** Leaving `e5` without unblocked escapes (`openCorridors == 0`) incurs the full penalty (`146`), while constructive single-corridor exits (`openCorridors == 1`) incur a halved penalty (`kingThroneAbandonPenalty / 2`), preventing premature suicide exits without paralyzing valid breakouts.
 
 ### 3.6 Camp-Wall Pinch Traps & Empty Throne Anvils
 * **Camp Pinch Traps (`campPinchTraps`):** Black soldiers stationed near camp perimeters can trap adjacent White defenders against camp walls. `BlackHeuristics.java` detects alignment where a Black pawn is positioned 2 squares away along a row or column with a White defender in between, threatening immediate custodian execution.
 * **Throne Anvil Threats (`throneAnvilThreats`):** When the King vacates `e5`, the center Throne becomes an impassable hostile barrier for both sides. Black leverages this geometry by placing White defenders between Black soldiers and `e5`, threatening captures with the Throne as an anvil.
 
 ### 3.7 Feature Covariance & SVD/PCA Audit (`analyze_feature_covariance.py`)
-To prevent collinearity and gradient cancellation during SPSA tuning (where correlated parameters oscillate without improving strength), `scripts/analyze_feature_covariance.py` evaluates feature matrix $\mathbf{X} \in \mathbb{R}^{N \times 22}$ across 20,000 self-play board states generated via `FeatureMatrixGenerator.java`:
+To prevent collinearity and gradient cancellation during SPSA tuning (where correlated parameters oscillate without improving strength), `scripts/analyze_feature_covariance.py` evaluates feature matrix $\mathbf{X} \in \mathbb{R}^{N \times 24}$ across 20,000 self-play board states generated via `FeatureMatrixGenerator.java`:
 * Computes Pearson correlation matrix $\mathbf{R}$ and condition number $\kappa(\mathbf{X})$.
-* Verifies that all 22 features maintain pairwise correlations $r < 0.85$, ensuring mathematical orthogonality and clean gradient descent during multi-night training runs.
+* Verifies that all 24 features maintain low collinearity, ensuring mathematical orthogonality and clean gradient descent during multi-stage SPSA training runs.
 
 ---
 
 ## 4. Mathematical Formulation & Normalization
 
-The static score is computed as a zero-sum differential between White's positional score and Black's positional score:
+The static score is computed as a zero-sum differential between White's 12 positional/material terms and Black's 12 positional/material terms:
 
-$$\text{Score}_{\text{White}}(S) = \sum_{i=1}^{11} w_{w,i} \cdot f_{w,i}(S) - \sum_{j=1}^{11} w_{b,j} \cdot f_{b,j}(S)$$
+$$\text{Score}_{\text{White}}(S) = \sum_{i=1}^{12} w_{w,i} \cdot f_{w,i}(S) - \sum_{j=1}^{12} w_{b,j} \cdot f_{b,j}(S)$$
 
 To conform to the Negamax convention (where the score is always expressed relative to the player whose turn it is to move):
 
@@ -158,12 +161,12 @@ flowchart LR
     end
 ```
 
-### 4.1 Symmetric Cancellation at the Initial Position
-At the starting board position, the board is perfectly symmetric across all four quadrants. The heuristic weights were tuned such that:
+### 4.1 Zero-Centered Contempt & Initial White Bias (`HeuristicEvaluation.evaluateDraw`)
+Because Ashton Tablut starts asymmetrically (1 King + 8 White vs. 16 Black), the static evaluation of the initial board has a non-zero baseline `whiteBias = computeInitialWhiteBias(weights)`. In Phase 16, draw evaluation was anchored directly around `whiteBias`:
 
-$$\text{Score}_{\text{White}}(S_{\text{initial}}) \approx 0 \text{ centipawns}$$
+$$\text{Draw}_{\text{White}}(S) = \text{whiteBias} - \text{whiteContempt}(\text{whiteCount}, \text{blackCount})$$
 
-Neither side starts with a perceived decisive advantage, ensuring stable search tree exploration during the opening phase.
+and sign-flipped under Negamax for Black. This guarantees that equal-material repetitions evaluate neutrally relative to the starting position while encouraging the side ahead in material to play for a win and allowing an outnumbered White side to hold fortress draws cleanly.
 
 ### 4.2 Raw Throughput Profile
 Because `HeuristicEvaluation.java` operates entirely on flat byte arrays with primitive bitwise operations and zero memory allocations, the heuristic evaluation achieves:

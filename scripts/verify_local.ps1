@@ -37,14 +37,18 @@ if ($starterChanges) {
 # 3. Clean Bytecode Compilation
 Write-Host "[3/6] Compiling Java Bytecode into bin/..." -ForegroundColor Yellow
 $binDir = Join-Path $BaseDir "bin"
-if (!(Test-Path $binDir)) { New-Item -ItemType Directory -Path $binDir | Out-Null }
+if (Test-Path $binDir) { Remove-Item -Recurse -Force $binDir }
+New-Item -ItemType Directory -Path $binDir | Out-Null
 
 $ServerJar = Join-Path $BaseDir "TablutCompetition-master\Tablut\Executables\Server.jar"
 $StarterLib = Join-Path $BaseDir "TablutCompetition-master\Tablut\lib\*"
 $ClassPath = "$ServerJar;$StarterLib"
 
 $javaSources = Get-ChildItem (Join-Path $BaseDir "src\tablut\engine\*.java") | ForEach-Object { $_.FullName }
-javac -cp $ClassPath -d $binDir $javaSources
+javac -encoding UTF-8 -cp $ClassPath -d $binDir $javaSources
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Compilation failed with exit code $LASTEXITCODE."
+}
 
 $clientClass = Join-Path $binDir "tablut\engine\TablutAgentClient.class"
 if (!(Test-Path $clientClass)) {
@@ -77,14 +81,18 @@ foreach ($shFile in $shFiles) {
 }
 
 # 5. Execute Test Battery
-Write-Host "[5/6] Running Test Battery (Rules, Perft, Opening Book, Phase 15 Engine)..." -ForegroundColor Yellow
+Write-Host "[5/6] Running Test Battery (Rules, Perft, Search, TT, Opening Book, Phase 15-16)..." -ForegroundColor Yellow
 $testCp = "$binDir;$ClassPath"
 
 $testClasses = @(
     "tablut.engine.RuleVerificationTest",
     "tablut.engine.PerftTest",
+    "tablut.engine.TranspositionTableTest",
+    "tablut.engine.SearchEngineTest",
+    "tablut.engine.ParallelSearchEngineTest",
     "tablut.engine.OpeningBookTest",
-    "tablut.engine.Phase15FinalOptimizationsTest"
+    "tablut.engine.Phase15FinalOptimizationsTest",
+    "tablut.engine.Phase16RecalibrationTest"
 )
 
 foreach ($tc in $testClasses) {
@@ -95,7 +103,7 @@ foreach ($tc in $testClasses) {
     }
 }
 
-Write-Host "  -> All 4 test suites PASSED with 0 errors!" -ForegroundColor Green
+Write-Host "  -> All $($testClasses.Count) test suites PASSED with 0 errors!" -ForegroundColor Green
 
 # 6. Smoke Match vs RandomPlayer
 if (!$SkipMatch) {

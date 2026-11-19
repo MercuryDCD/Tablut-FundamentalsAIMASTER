@@ -115,7 +115,11 @@ public final class WhiteHeuristics {
                     || (safeForks > 0)
                     || (safeSingles > 0);
             if (weights.kingThroneAbandonPenalty > 0 && !hasUnblockedEscape) {
-                score -= weights.kingThroneAbandonPenalty;
+                if (openCorridors == 1) {
+                    score -= weights.kingThroneAbandonPenalty / 2;
+                } else {
+                    score -= weights.kingThroneAbandonPenalty;
+                }
             }
         }
 
@@ -158,7 +162,9 @@ public final class WhiteHeuristics {
                             int excess = manhattan - 3;
                             dispersionPenalty += excess * excess;
                             if (r <= 1 || r >= 7 || c <= 1 || c >= 7) {
-                                dispersionPenalty += 8;
+                                if (!isRhombusContestSquare(r, c)) {
+                                    dispersionPenalty += 8;
+                                }
                                 if (BoardConstants.IS_WIN_SQUARE_FOR_KING[sq]) {
                                     dispersionPenalty += 6;
                                 }
@@ -178,6 +184,15 @@ public final class WhiteHeuristics {
         }
 
         return score;
+    }
+
+    /**
+     * Returns true if (r, c) is one of the 8 strategic Rhombus blockade squares
+     * {c2, g2, b3, h3, b7, h7, c8, g8} where White soldiers actively contest Black's ring.
+     */
+    public static boolean isRhombusContestSquare(int r, int c) {
+        return ((r == 1 || r == 7) && (c == 2 || c == 6))
+                || ((c == 1 || c == 7) && (r == 2 || r == 6));
     }
 
     /**

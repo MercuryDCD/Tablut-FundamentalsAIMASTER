@@ -18,7 +18,7 @@ The evaluation framework executes all matches within an isolated VirtualBox virt
 | **Disk Storage** | **30 GB max** | Silent stdout/stderr output; zero logging to disk in production |
 | **GPU Acceleration** | **NONE (Pure CPU)** | 100% CPU-based search and bitwise heuristic evaluation |
 | **Network Access** | **ISOLATED (No Internet)** | 100% self-contained; zero online asset fetching or pip/apt calls |
-| **Move Timeout** | Configured by server (15s–60s) | Two-tier dynamic time manager (85–90% safety cutoff) |
+| **Move Timeout** | Configured by server (15s–60s) | Two-tier dynamic time manager (`timeSafetyRatio = 0.96`, 82% soft cutoff, partial-depth adoption) |
 | **Opponent Turn** | **0.0% CPU computation** | Thread pool parked; strict kernel-level blocking TCP socket read |
 | **Submission Deadline**| **November 22, 23:59 (Italian Time)** | Delivered via Virtuale assignment with OneDrive VM link |
 
@@ -87,11 +87,11 @@ javac -version
 ```
 
 ### Step 3.2: Compile the Engine Bytecode
-Run the official build command from the project root:
+Run the official UTF-8 build command from the project root:
 ```bash
 cd /home/tablut/tablut
 mkdir -p bin
-javac -cp "TablutCompetition-master/Tablut/Executables/Server.jar:TablutCompetition-master/Tablut/lib/*" -d bin src/tablut/engine/*.java
+javac -encoding UTF-8 -cp "TablutCompetition-master/Tablut/Executables/Server.jar:TablutCompetition-master/Tablut/lib/*" -d bin src/tablut/engine/*.java
 ```
 
 Verify that bytecode classes were generated cleanly in `bin/tablut/engine/`:
@@ -131,7 +131,9 @@ The script must accept three positional arguments:
 Inspect the verified content of `/home/tablut/tablut/runmyplayer.sh`:
 ```bash
 #!/bin/bash
-# Official Tablut Competition Execution Wrapper
+# Official execution script for DajeGeppetto AI Agent (UNIBO Tablut Challenge 2026/2027)
+# Usage: ./runmyplayer.sh <ROLE> <TIMEOUT_SECONDS> <SERVER_IP>
+
 ROLE="$1"
 TIMEOUT="$2"
 SERVER_IP="$3"
@@ -143,14 +145,31 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="$SCRIPT_DIR/bin"
-LIB_SERVER="$SCRIPT_DIR/TablutCompetition-master/Tablut/Executables/Server.jar"
+CLASSPATH="$BIN_DIR:$SCRIPT_DIR/TablutCompetition-master/Tablut/Executables/Server.jar:$SCRIPT_DIR/TablutCompetition-master/Tablut/lib/*"
 
-exec java -cp "$BIN_DIR:$LIB_SERVER" tablut.engine.TablutAgentClient "$ROLE" "$TIMEOUT" "$SERVER_IP"
+if [ ! -f "$BIN_DIR/tablut/engine/TablutAgentClient.class" ]; then
+    mkdir -p "$BIN_DIR"
+    javac -encoding UTF-8 -cp "$CLASSPATH" -d "$BIN_DIR" "$SCRIPT_DIR"/src/tablut/engine/*.java
+fi
+
+exec java -Xmx4g -Xms512m -XX:+UseG1GC -cp "$CLASSPATH" tablut.engine.TablutAgentClient "$ROLE" "$TIMEOUT" "$SERVER_IP"
 ```
 
 ---
 
-## 5. Pre-Submission Verification Gauntlet (The 10 Invariants)
+## 5. Pre-Submission Verification Gauntlet (Automated Scripts & 10 Invariants)
+
+> [!TIP]
+> **One-Command Automated Certification:**
+> Before running manual checks, execute the automated verification suites which perform clean UTF-8 builds, LF sanitization on all `.sh` scripts, starter immutability checks, all **8 core Java test suites** (`RuleVerificationTest`, `PerftTest`, `TranspositionTableTest`, `SearchEngineTest`, `ParallelSearchEngineTest`, `OpeningBookTest`, `Phase15FinalOptimizationsTest`, `Phase16RecalibrationTest`), and an end-to-end `Server.jar` smoke match from `/tmp` with mixed-case role `wHitE`:
+> ```bash
+> # Inside the official Debian VM:
+> cd /home/tablut/tablut && ./scripts/verify_vm.sh
+> ```
+> ```powershell
+> # On the local Windows host:
+> powershell -ExecutionPolicy Bypass -File scripts/verify_local.ps1
+> ```
 
 Execute this exhaustive 10-point test battery inside the VM to certify tournament readiness before final export.
 
@@ -167,7 +186,7 @@ Execute this exhaustive 10-point test battery inside the VM to certify tournamen
 3. Test that the agent compiles and runs without attempting external network calls:
    ```bash
    cd /home/tablut/tablut
-   javac -cp "TablutCompetition-master/Tablut/Executables/Server.jar:TablutCompetition-master/Tablut/lib/*" -d bin src/tablut/engine/*.java
+   javac -encoding UTF-8 -cp "TablutCompetition-master/Tablut/Executables/Server.jar:TablutCompetition-master/Tablut/lib/*" -d bin src/tablut/engine/*.java
    ```
 
 ### Invariant 2: End-to-End Match vs. Baseline RandomPlayer
@@ -211,7 +230,7 @@ Test that the engine dynamically adapts to different timeout limits specified on
 # Test aggressive 10-second budget:
 ./runmyplayer.sh WHITE 10 127.0.0.1
 ```
-* **Expected Result:** Soft cutoffs abort new iterations when $T_{\text{projected}} > 0.90 \times \text{timeout}$, and emergency bitmask checks halt search threads before 90% of the limit expires. No move ever exceeds the referee deadline.
+* **Expected Result:** Soft cutoffs activate at `82%` elapsed budget with dynamic $b_{\text{eff}}$, and emergency bitmask checks halt search + Quiescence threads cleanly at `96%` of the limit (`timeSafetyRatio = 0.96`). No move ever exceeds the referee deadline.
 
 ### Invariant 5: Case-Insensitive Role Parsing
 Verify that mixed-case role arguments are parsed correctly without throwing `IllegalArgumentException`:
@@ -249,14 +268,15 @@ java -cp "bin:TablutCompetition-master/Tablut/Executables/Server.jar:TablutCompe
 * **Expected Result:** 100% of opening book unit tests pass, confirming all 24 canonical lines keep the King anchored on `e5` while defenders clear corridors.
 
 ### Invariant 9: Comprehensive Regression Suite Pass
-Run all 14 engine test suites inside the VM:
+Run the full engine regression test battery inside the VM (or via `./scripts/verify_vm.sh`):
 ```bash
 cd /home/tablut/tablut
-java -cp "bin:TablutCompetition-master/Tablut/Executables/Server.jar:TablutCompetition-master/Tablut/lib/*" tablut.engine.Phase13RefinementsTest
-java -cp "bin:TablutCompetition-master/Tablut/Executables/Server.jar:TablutCompetition-master/Tablut/lib/*" tablut.engine.Phase12OptimizationsTest
-java -cp "bin:TablutCompetition-master/Tablut/Executables/Server.jar:TablutCompetition-master/Tablut/lib/*" tablut.engine.PerftTest
+CP="bin:TablutCompetition-master/Tablut/Executables/Server.jar:TablutCompetition-master/Tablut/lib/*"
+for tc in RuleVerificationTest PerftTest TranspositionTableTest SearchEngineTest ParallelSearchEngineTest OpeningBookTest HeuristicEvaluationTest Phase12OptimizationsTest Phase13RefinementsTest Phase14TacticalHardeningTest Phase15FinalOptimizationsTest Phase16RecalibrationTest; do
+    java -cp "$CP" "tablut.engine.$tc"
+done
 ```
-* **Expected Result:** All tests report `PASSED` with zero assertion failures.
+* **Expected Result:** All 12 test suites report `PASSED` with zero assertion failures.
 
 ### Invariant 10: Immutability of Starter Files
 Verify that no files inside `TablutCompetition-master/` were modified:
@@ -272,14 +292,12 @@ git status TablutCompetition-master/
 Once all 10 invariants are certified, clean the VM filesystem before exporting the appliance.
 
 ### Step 6.1: Clean Temporary Files & Bash History
-Inside the VM:
+Inside the VM, run the automated cleanup script (which performs a clean UTF-8 build, sanitizes LF endings on all `.sh` files, and purges `logs/*`, `scratch/*`, `bin_prev`, `temp_prev*`, `garbage`, `feature_matrix.csv`, `*.ova`, and `__pycache__`):
 ```bash
 cd /home/tablut/tablut
-# Remove temporary test logs or scratch files:
-rm -rf logs/* scratch/* /tmp/*
-# Clean package manager caches:
+./scripts/clean_vm.sh
+# Clean package manager caches & bash history:
 sudo apt-get clean 2>/dev/null || true
-# Clear bash history:
 cat /dev/null > ~/.bash_history && history -c
 ```
 
@@ -340,13 +358,15 @@ Examples:
 /home/tablut/tablut/runmyplayer.sh wHitE 15 192.168.20.101
 
 4. TECHNICAL SPECIFICATIONS & HIGHLIGHTS:
-- Architecture: Zero-allocation Java 8+ engine utilizing Negamax PVS search,
-  aspiration windows, singular tactical extensions, and dynamic b_eff calibration.
+- Architecture: Zero-allocation Java 8+ engine utilizing Negamax PVS + LMR search,
+  aspiration windows (delta=120), singular tactical extensions, dynamic b_eff
+  calibration, 96% time safety ratio, and Verified Partial-Depth Root Adoption.
 - Concurrency: 4-thread Lazy SMP utilizing Robert Hyatt's lockless XOR Transposition
-  Table scaled to 2^23 entries (134 MB RAM) with 2-slot buckets.
-- Knowledge Base: 22-parameter heuristic evaluator tuned via multi-night SPSA,
-  sanitized D4 opening book (784 symmetric states) with Throne retention, and O(1)
-  analytic mate cutoffs.
+  Table via VarHandle opaque access, scaled to 2^23 entries (134 MB RAM) with
+  2-slot buckets and forced-loss-protected worker reconciliation.
+- Knowledge Base: 24-parameter heuristic evaluator calibrated via Depth-5/6 CRN SPSA
+  (38,668 games), global D4 opening book (deterministic epsilon=0.0, Throne retention,
+  NNUE counters), zero-centered draw contempt, and O(1) analytic mate cutoffs.
 - Compliance: 100% CPU execution (no GPU), 0.0% CPU usage during opponent turns
   (blocking TCP read), 100% offline autonomy (zero network calls), disk-safe logging.
 

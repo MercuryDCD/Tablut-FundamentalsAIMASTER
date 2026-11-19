@@ -77,15 +77,17 @@ $$\text{tableLocks}[\text{index}] = \text{zobristHash} \oplus \text{tableData}[\
 +-----------+-------------+---------+---------+----------+
 ```
 
-### 2.2 Atomic Verification on Probe
+### 2.2 Atomic Verification on Probe (`VarHandle` Opaque Access)
+In Phase 16, `TranspositionTable.java` upgraded raw array accesses to Java **`MethodHandles.VarHandle` opaque reads/writes** (`LOCK_VH` and `DATA_VH`) with `LongAdder` diagnostics. Opaque mode prevents the JIT compiler from hoisting or tearing 64-bit `long` accesses across concurrent Lazy SMP workers while incurring zero mutex or memory-fence overhead.
+
 When a thread probes a position with hash `zobristHash`:
 1. It computes bucket index `b = (int)(zobristHash & bucketMask)`.
 2. It tests Slot 0 (`idx = 2 * b`). If valid and matching, it uses Slot 0.
 3. If Slot 0 misses, it immediately tests Slot 1 (`idx = 2 * b + 1`).
 
 ```java
-long data = tableData[slotIdx];
-long lock = tableLocks[slotIdx];
+long data = (long) DATA_VH.getOpaque(tableData, slotIdx);
+long lock = (long) LOCK_VH.getOpaque(tableLocks, slotIdx);
 
 if ((lock ^ data) == zobristHash) {
     // Valid entry: data is consistent and matches current position
@@ -102,20 +104,20 @@ If a concurrent thread overwrites `tableData[index]` during a read, the relation
 ```mermaid
 flowchart TD
     subgraph "Thread 0 (Writing)"
-        W1["Compute zobristHash & pack tableData"] --> W2["tableData[idx] = data"]
-        W2 --> W3["tableLocks[idx] = zobristHash ^ data"]
+        W1["Compute zobristHash & pack tableData"] --> W2["DATA_VH.setOpaque(tableData, idx, data)"]
+        W2 --> W3["LOCK_VH.setOpaque(tableLocks, idx, zobristHash ^ data)"]
     end
 
     subgraph "Concurrent Access: Zero Locks"
-        W2 -. "Unsynchronized Write" .-> TableData[("tableData[2^21]")]
-        W3 -. "Unsynchronized Write" .-> TableLocks[("tableLocks[2^21]")]
+        W2 -. "Opaque Write" .-> TableData[("tableData[2^23]")]
+        W3 -. "Opaque Write" .-> TableLocks[("tableLocks[2^23]")]
     end
 
     subgraph "Thread 1 (Probing)"
-        P1["Read data = tableData[idx]"]
-        P2["Read lock = tableLocks[idx]"]
-        TableData -. "Direct Read" .-> P1
-        TableLocks -. "Direct Read" .-> P2
+        P1["Read data = DATA_VH.getOpaque(idx)"]
+        P2["Read lock = LOCK_VH.getOpaque(idx)"]
+        TableData -. "Opaque Read" .-> P1
+        TableLocks -. "Opaque Read" .-> P2
         P1 --> Check{"(lock ^ data) == zobristHash?"}
         P2 --> Check
         Check -- "True" --> Valid["Cache HIT: Safe, consistent data"]
@@ -144,6 +146,13 @@ At the root of the search tree, each worker thread evaluates the candidate moves
 $$\text{Index}_{\text{thread } t}(i) = (i + t) \pmod N_{\text{moves}}$$
 
 Worker threads evaluate different initial candidate moves as their primary branches. The first thread to establish a $\beta$-cutoff populates the Transposition Table, allowing other threads to immediately prune identical subtrees when they reach those moves.
+
+### 3.3 Forced-Loss-Protected Worker Selection (`isBetterWorkerResult`) & Partial-Depth Adoption
+Upon joining all worker threads at the search deadline, `ParallelSearchEngine.chooseBestWorker` reconciles results via `isBetterWorkerResult` (hardened in Phases 15–17):
+* **Faster Forced Mate Wins:** Any worker finding a strictly shorter forced win (`score >= WIN_THRESHOLD`) takes immediate priority.
+* **Forced-Loss Depth Protection:** A shallower search result (e.g., Depth 8) can never overwrite a deeper worker's forced-loss detection (e.g., Depth 9 `-WIN + ply`), preventing blind optimism from hiding a proven tactical loss.
+* **Equal-Depth Non-Loss Survival & Delayed-Loss Preference:** At equal depth, a non-loss heuristic score always replaces a forced-loss score; if both are forced losses, the line delaying defeat longer is preferred.
+* **Verified Partial-Depth Root Adoption:** Each worker adopts an in-window non-hanging improvement (`alpha < bestScoreThisDepth < beta`) completed at depth $d$ after `rootMoves[0]` finished when the hard deadline interrupts mid-iteration.
 
 ---
 

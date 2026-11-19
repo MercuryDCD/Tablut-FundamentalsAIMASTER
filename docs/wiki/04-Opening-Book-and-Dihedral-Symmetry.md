@@ -171,7 +171,7 @@ Total lookup latency is **$< 0.01 \text{ ms}$** (typically sub-microsecond on mo
 
 ## 4. Automated Opening Mining Pipeline (`scripts/mine_openings.py`)
 
-To systematically discover and expand high-leverage opening variations against competitive opponents (such as BrAInmates, THoR, and Luca), the engine incorporates an automated opening log miner:
+To systematically discover and expand high-leverage opening variations from recorded match logs, the engine incorporates an automated opening log miner:
 
 ```bash
 python scripts/mine_openings.py --logs-dir logs --max-plies 6 --min-winrate 0.70
@@ -183,22 +183,23 @@ python scripts/mine_openings.py --logs-dir logs --max-plies 6 --min-winrate 0.70
 
 ---
 
-## 5. Phase 14 & 15 Opening Sanitization & Code Freeze
+## 5. Phase 14–17 Opening Sanitization, Global $D_4$ Lookup & NNUE Counters
 
-### 5.1 Tactical Outer-Cross Sanitization
+### 5.1 Tactical Outer-Cross Sanitization (Phase 15)
 Analysis of live tournament losses against deep engines revealed that early inner-cross moves (e.g., $1. \dots e4 \to d4$) left friendly defenders tactically hanging (*en prise*) to immediate double-flank captures on ply 2.
 
-In Phase 15, White openings were sanitized to strictly favor secure outer-cross extensions:
-* $1. e7 \to f7$
-* $1. c5 \to c4$
-* $1. g5 \to g6$
+White openings were sanitized using `startPly` filtering to strictly favor secure outer-cross extensions:
+* $1. e7 \to f7$, $1. c5 \to c4$, $1. g5 \to g6$
 * Elimination of premature King moves and inner-corridor self-hanging moves.
 * Dedicated Black counter-punishment line ($i4 \to e4$) punishing early White inaccuracies.
 
-### 5.2 Stochastic $\varepsilon$-Greedy Selection (80 / 20)
-To prevent adversarial competitors from precomputing refutation trees against deterministic lines, `OpeningBook.java` employs an $\varepsilon$-greedy policy:
-* **80% Probability:** Plays the highest-rated principal canonical move.
-* **20% Probability:** Selects among alternative high-quality theoretical responses.
+### 5.2 Global $D_4$ Best-Weight Lookup & Deterministic Default (Phase 16)
+Prior lookup logic returned on the first matching symmetry (`sym=0`), which could shadow higher-weight rotated tactical lines (such as Line 0B rotations `1. d5d6 -> d1d5` and `1. f5f4 -> f9f5`). In Phase 16:
+* `OpeningBook.lookupMove` scans **all 8 $D_4$ symmetries** globally and selects the highest-weight canonical entry across all orientations.
+* Tournament default exploration is set strictly deterministic (**$\varepsilon = 0.0$**) to always play the highest-verified theoretical reply, while retaining configurable $\varepsilon$-greedy / weighted stochastic sampling for offline SPSA self-play diversity.
 
-### 5.3 Code Freeze Declaration
-The opening book theory and coordinate transformation engine are **permanently frozen**. Future iterations rely solely on SPSA weight optimization for middlegame and endgame play.
+### 5.3 Line 29: White Counter-System vs. `1... e2 -> g2` (Phase 17)
+To counter early Black flank deployment `1... e2 -> g2` after `1. e7 -> f7`, Phase 17 added Line 29 (`e6c6`, `d5d6`, `f5f4`, `f5f3` continuations against `b5b3`, `h5h7`, and `e8c8`) using even-ply `startPly = uciMoves.length - 1` (plies 2, 4, 6) so **only White book moves are recorded** while leaving Black's opening repertoire completely untouched.
+
+### 5.4 Code Freeze Declaration
+The opening book theory and global $D_4$ transformation engine are **permanently frozen** and certified via `OpeningBookTest` and `Phase16RecalibrationTest`.

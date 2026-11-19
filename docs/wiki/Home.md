@@ -1,6 +1,6 @@
-# Ashton Tablut Engine — Architecture & Technical Wiki
+# DajeGeppetto — Ashton Tablut Engine Technical Wiki
 
-Welcome to the technical documentation for the Ashton Tablut autonomous chess-like engine. This wiki covers the internal design, data representations, search algorithms, heuristic formulations, concurrency models, and automated optimization pipelines powering the engine.
+Welcome to the technical documentation for **DajeGeppetto**, an autonomous Ashton Tablut engine developed for the UNIBO Tablut Challenge (A.A. 2026/2027). This wiki covers the internal design, data representations, search algorithms, heuristic formulations, concurrency models, and automated optimization pipelines powering the engine.
 
 The engine is built in zero-allocation Java, targeting execution in restricted tournament environments (Debian Linux, 4 vCPUs, 8 GB RAM, no GPU, offline execution).
 
@@ -66,17 +66,16 @@ The engine relies on a modular, zero-allocation design optimized for cache local
 | Architectural Component | Implementation Detail | Performance Profile |
 | :--- | :--- | :--- |
 | **State Representation** | Flat 81-byte array (`byte[81]`) with incremental 64-bit Zobrist hashing | **85,048,952 NPS** (raw Perft) |
-| **Tree Traversal** | Negamax $\alpha$-$\beta$, Iterative Deepening, PVS, Aspiration Windows, Singular Extensions | **>25,000,000 NPS** in live search |
-| **Tactical Cutoffs** | $O(1)$ analytic score-bounded mate & escape pruning (`TacticalCutoffs.java`) | **0-node instant cutoff** (1-5 ms) |
-| **Transposition Table** | 2-Slot Bucket (Depth-Preferred / Always-Replace), Hyatt Lockless XOR, $2^{23}$ entries | **134 MB RAM**, 0 locks, 0 torn reads |
-| **Opening Book** | $D_4$ Dihedral symmetry (24 canonical lines, 784 symmetric states), Throne retention, Outer-cross sanitization | **<0.01 ms** response time |
-| **Heuristics** | 24 parameterized features, single-pass loop fusion, rebalanced White material (`320`), Throne escape gradients | **30,940,593 evals/sec** |
-| **Concurrency** | Lazy SMP across 4 vCPUs with Best-Worker Adoption, zero-allocation context recycling, Hyatt XOR TT | **3.85x speedup** on 4 vCPUs |
+| **Tree Traversal** | Negamax $\alpha$-$\beta$, Iterative Deepening (Depth 13–18 @ 60s), PVS, Aspiration Windows ($\Delta=120$), LMR (King-proximity guarded), Singular Extensions, Partial-Depth Adoption | **>25,000,000 NPS** (100M–340M nodes/move @ 60s) |
+| **Tactical Cutoffs** | $O(1)$ analytic score-bounded mate & escape pruning (`TacticalCutoffs.java`) | **0-node instant cutoff** (0–6 ms) |
+| **Transposition Table** | 2-Slot Bucket (Depth-Preferred / Always-Replace), `VarHandle` Opaque Hyatt Lockless XOR, $2^{23}$ entries | **134 MB RAM**, 0 locks, 0 torn reads |
+| **Opening Book** | Global $D_4$ Dihedral symmetry best-weight lookup (deterministic $\varepsilon=0.0$), Throne retention, Outer-cross sanitization, Line 29 flank counters | **<0.01 ms** response time |
+| **Heuristics** | 24 SPSA-calibrated features (`S2B_d5_all_best`), single-pass loop fusion, graduated Throne-abandon & Rhombus-contest exemption, zero-centered draw contempt | **30,940,593 evals/sec** |
+| **Concurrency** | Lazy SMP across 4 vCPUs with forced-loss-protected `isBetterWorkerResult`, zero-allocation context recycling, `VarHandle` Hyatt XOR TT | **3.85x speedup** on 4 vCPUs |
 | **Memory Allocation** | Zero heap allocation in search loops; preallocated stack arrays and structs | **0 bytes/sec** GC pressure |
 | **Move Ordering** | 5-tier cascade: TT PV $\to$ Winning Moves $\to$ Captures $\to$ Killers $\to$ History + Root Minimax Score Sort | **40.5x** node pruning factor |
-| **Tactical Search** | Quiescence search with stand-pat, full tactical sorting, and distance $\le 2$ King escape extensions | Horizon effect resolved |
-| **Competitor Gauntlet** | Official 30s match vs brAInmates (2-0), THoR (1.5-0.5), Luca (2-0) | **5.5 / 6.0 (91.7%)** |
-| **Development Status** | **Architecture Code Freeze:** Java codebase frozen; active development strictly on offline SPSA | Multi-night parameter learning |
+| **Tactical Search** | Quiescence search with stand-pat, dynamic delta margin, deadline cancellation, full tactical sorting, and distance $\le 2$ King escape extensions | Horizon effect resolved |
+| **Development Status** | **Tournament-Certified Release (Phase 17):** Frozen Java engine + Depth-5/6 CRN SPSA weights (`38,668` self-play games), 12/12 Java test suites passing | Submission-ready for UNIBO VM |
 
 ```mermaid
 flowchart TD
@@ -110,9 +109,9 @@ The documentation is organized across distinct engineering modules:
 
 1. [**01 — State Representation & Bit Architecture**](01-State-Representation-and-Bit-Architecture.md): Board layout, primitive move packing, stack-allocated undo structs, Ashton capture execution, and 64-bit Zobrist hashing.
 2. [**02 — Search & Pruning Algorithms**](02-Search-and-Pruning-Algorithms.md): Negamax, Iterative Deepening, Principal Variation Search (PVS), Aspiration Windows, Singular Extensions, $O(1)$ Tactical Cutoffs, dynamic branching calibration, and root anti-hanging filters.
-3. [**03 — Heuristics & Domain Knowledge**](03-Heuristics-and-Domain-Knowledge.md): 22 parameterized domain features, 2-step proactive escape forks (`SAFE_FORKS`), King shield cohesion, dispersion penalties, 8-point Rhombus cordon, citadel barriers, and SVD covariance analysis.
-4. [**04 — Opening Book & Dihedral Symmetry**](04-Opening-Book-and-Dihedral-Symmetry.md): $D_4$ group theory (8-fold spatial reduction), canonical opening lines, Phase 13 Throne retention sanitization, automated opening miner, and sub-millisecond lookups.
-5. [**05 — Concurrency & Lazy SMP**](05-Concurrency-and-Lazy-SMP.md): Multi-core scaling on 4 vCPUs, 2-slot bucket lockless Transposition Table via Hyatt XOR masking ($2^{23}$ entries / 134 MB), thread staggering, and opponent-turn 0% CPU suppression.
-6. [**06 — Offline Tuning Pipeline (SPSA)**](06-Offline-Tuning-Pipeline-SPSA.md): Headless match simulation, simultaneous perturbation gradient approximation, decay schedules, atomic checkpoints, SVD/PCA orthogonality audit, and parameter injection.
-7. [**07 — Protocol, CLI & Execution**](07-Protocol-CLI-and-Execution.md): TCP wire framing, dynamic time management ($b_{\text{eff}}$ soft cutoff & emergency bitmask hard cutoff), competition scripts, multi-competitor tournament harness vs BrAInmates, THoR, and Luca.
+3. [**03 — Heuristics & Domain Knowledge**](03-Heuristics-and-Domain-Knowledge.md): 24 SPSA-calibrated domain features, 2-step proactive escape forks (`SAFE_FORKS`), King shield cohesion, Rhombus-contest exemption, graduated Throne-abandon penalty, zero-centered draw contempt, and SVD covariance analysis.
+4. [**04 — Opening Book & Dihedral Symmetry**](04-Opening-Book-and-Dihedral-Symmetry.md): $D_4$ group theory (8-fold spatial reduction), global best-weight symmetry lookup, Throne retention sanitization, Line 29 flank counter-system, automated opening miner, and sub-millisecond lookups.
+5. [**05 — Concurrency & Lazy SMP**](05-Concurrency-and-Lazy-SMP.md): Multi-core scaling on 4 vCPUs, 2-slot bucket lockless Transposition Table via `VarHandle` Hyatt XOR masking ($2^{23}$ entries / 134 MB), `isBetterWorkerResult` forced-loss protection, and opponent-turn 0% CPU suppression.
+6. [**06 — Offline Tuning Pipeline (SPSA)**](06-Offline-Tuning-Pipeline-SPSA.md): Headless CRN simulator, Black non-regression gating, 4-stage Depth-5/6 overnight pipeline (`overnight_60s_pipeline.py`, 38,668 games), multi-resolution shootouts, atomic checkpoints, and SVD/PCA orthogonality audit.
+7. [**07 — Protocol, CLI & Execution**](07-Protocol-CLI-and-Execution.md): TCP wire framing, dynamic time management (`timeSafetyRatio = 0.96`, 82% soft cutoff, Verified Partial-Depth Root Adoption), UTF-8 competition scripts, and local testing harnesses.
 8. [**08 — VM Deployment & Verification Guide**](08-VM-Deployment-and-Verification-Guide.md): Complete step-by-step procedure for deploying, building, verifying offline execution, auditing CPU/disk invariants, and certifying the player inside the official Debian competition Virtual Machine before submission.

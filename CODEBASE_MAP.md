@@ -1,6 +1,6 @@
-# Tablut AI Agent — Codebase Map & Agent Context Index (`CODEBASE_MAP.md`)
+# DajeGeppetto — Codebase Map & Architecture Reference (`CODEBASE_MAP.md`)
 
-> **Agent Optimization Notice:** This document provides a complete, low-level architectural digest of every source file, data structure, bitwise layout, heuristic formula, and invariant in the project. Any AI coding agent reading this file can understand, debug, or extend any subsystem without reading the underlying `.java` files into context.
+> **Technical Digest:** This document provides a complete, low-level architectural reference of every source file, data structure, bitwise layout, heuristic formula, and invariant in the **DajeGeppetto** Tablut engine.
 
 ---
 
@@ -47,7 +47,7 @@
 ## 2. Core Domain & High-Speed State Representation
 
 ### `BoardConstants.java`
-* **Path:** [`src/tablut/engine/BoardConstants.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/BoardConstants.java)
+* **Path:** [`src/tablut/engine/BoardConstants.java`](src/tablut/engine/BoardConstants.java)
 * **Purpose:** Static lookup tables, precomputed bitmasks, and geometric definitions for the $9 \times 9$ Ashton Tablut board.
 * **Coordinate System:**
   * 1D index: `sq = row * 9 + col` ($0 \dots 80$).
@@ -72,7 +72,7 @@
 ---
 
 ### `Move.java`
-* **Path:** [`src/tablut/engine/Move.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/Move.java)
+* **Path:** [`src/tablut/engine/Move.java`](src/tablut/engine/Move.java)
 * **Purpose:** Zero-allocation move representation packed inside a primitive 32-bit `int`.
 * **Bit Layout:**
   * Bits $0 \dots 6$ ($7$ bits): `from` square ($0 \dots 80$). Mask: `0x7F`.
@@ -88,7 +88,7 @@
 ---
 
 ### `UndoInfo.java`
-* **Path:** [`src/tablut/engine/UndoInfo.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/UndoInfo.java)
+* **Path:** [`src/tablut/engine/UndoInfo.java`](src/tablut/engine/UndoInfo.java)
 * **Purpose:** Stack-allocated struct recording state deltas to revert `makeMove` in $O(1)$ time without memory allocations.
 * **Fields:**
   * `int capturedCount`: Number of pieces captured by this move ($0 \dots 3$).
@@ -104,7 +104,7 @@
 ---
 
 ### `ZobristHash.java`
-* **Path:** [`src/tablut/engine/ZobristHash.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/ZobristHash.java)
+* **Path:** [`src/tablut/engine/ZobristHash.java`](src/tablut/engine/ZobristHash.java)
 * **Purpose:** Incremental 64-bit XOR hashing for $O(1)$ state updates, Transposition Table indexing, and cycle detection.
 * **Keys:**
   * `PIECE_KEYS[81][4]`: Deterministic 64-bit random values generated with fixed seed `0x5441424C55544149L` (`"TABLUTAI"`).
@@ -115,7 +115,7 @@
 ---
 
 ### `FastState.java`
-* **Path:** [`src/tablut/engine/FastState.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/FastState.java)
+* **Path:** [`src/tablut/engine/FastState.java`](src/tablut/engine/FastState.java)
 * **Purpose:** Core board representation, custodian capture engine, and Ashton Tablut victory referee.
 * **Internal Structure:**
   * `byte[] board = new byte[81]`: Flat piece array (L1 cache friendly).
@@ -144,7 +144,7 @@
 ---
 
 ### `MoveGenerator.java`
-* **Path:** [`src/tablut/engine/MoveGenerator.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/MoveGenerator.java)
+* **Path:** [`src/tablut/engine/MoveGenerator.java`](src/tablut/engine/MoveGenerator.java)
 * **Purpose:** Generates all legal moves for the current active player into a preallocated `int[]` array.
 * **Constants:** `MAX_MOVES = 256` (Tablut branching factor is typically $30 \dots 60$, max $< 150$).
 * **Movement Rules Enforced:**
@@ -160,7 +160,7 @@
 ## 3. Search Engine & Algorithmic Optimization
 
 ### `SearchEngine.java`
-* **Path:** [`src/tablut/engine/SearchEngine.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/SearchEngine.java)
+* **Path:** [`src/tablut/engine/SearchEngine.java`](src/tablut/engine/SearchEngine.java)
 * **Purpose:** Master search orchestrator combining Iterative Deepening Search (IDS), Negamax $\alpha$-$\beta$, Transposition Table, Move Ordering, and Quiescence Search.
 * **Constants & Settings:**
   * `MAX_DEPTH = 32`, `WIN_THRESHOLD = 99,000`, `DEFAULT_BRANCHING_FACTOR = 3.2`.
@@ -180,7 +180,7 @@
 ---
 
 ### `ParallelSearchEngine.java`
-* **Path:** [`src/tablut/engine/ParallelSearchEngine.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/ParallelSearchEngine.java)
+* **Path:** [`src/tablut/engine/ParallelSearchEngine.java`](src/tablut/engine/ParallelSearchEngine.java)
 * **Purpose:** Multi-threaded Lazy SMP (Shared Memory Parallelism) search coordinator utilizing 4 vCPUs for tournament play.
 * **Lazy SMP Architecture:**
   * Master thread (Thread 0) coordinates iterative deepening and dynamic time management (`aspirationDelta = 120`, matching `SearchEngine`).
@@ -199,7 +199,7 @@
 ---
 
 ### `TranspositionTable.java` (Phase 6, 13)
-* **Path:** [`src/tablut/engine/TranspositionTable.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/TranspositionTable.java)
+* **Path:** [`src/tablut/engine/TranspositionTable.java`](src/tablut/engine/TranspositionTable.java)
 * **Purpose:** Zero-allocation, lock-free hash table scaled to $2^{23}$ ($8,388,608$) entries (~134 MB RAM) featuring a 2-slot bucket architecture and Bob Hyatt's Lockless XOR verification.
 * **2-Slot Bucket Architecture (Phase 13 Pillar 4):**
   * Each bucket contains 2 slots:
@@ -223,7 +223,7 @@
 ---
 
 ### `MoveOrderer.java`
-* **Path:** [`src/tablut/engine/MoveOrderer.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/MoveOrderer.java)
+* **Path:** [`src/tablut/engine/MoveOrderer.java`](src/tablut/engine/MoveOrderer.java)
 * **Purpose:** Sorts candidate moves to maximize $\alpha$-$\beta$ cutoffs ($O(b^{d/2})$ best case).
 * **5 Priority Tiers & Tactical Bonuses:**
   1. `SCORE_TT_MOVE = 1,000,000`: Best move recorded in Transposition Table.
@@ -237,7 +237,7 @@
 ---
 
 ### `QuiescenceSearch.java`
-* **Path:** [`src/tablut/engine/QuiescenceSearch.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/QuiescenceSearch.java)
+* **Path:** [`src/tablut/engine/QuiescenceSearch.java`](src/tablut/engine/QuiescenceSearch.java)
 * **Purpose:** Eliminates the Horizon Effect by extending search at leaf nodes (depth 0) strictly over tactical captures and King escape moves until a quiet position is reached.
 * **Key Features:**
   * `MAX_QS_DEPTH = 6`: Prevents unbounded capture search explosions.
@@ -248,7 +248,7 @@
 ---
 
 ### `OpeningBook.java` (Phase 3, 9, 13, 14)
-* **Path:** [`src/tablut/engine/OpeningBook.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/OpeningBook.java)
+* **Path:** [`src/tablut/engine/OpeningBook.java`](src/tablut/engine/OpeningBook.java)
 * **Purpose:** Instant opening move retrieval ($< 0.01$ ms) during turns 1–5, saving computation time for midgame transitions.
 * **$D_4$ Dihedral Symmetry Group (8-fold compression):**
   * Symmetries: $4$ rotations ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) + $4$ reflections (horizontal, vertical, main diagonal, anti-diagonal).
@@ -263,7 +263,7 @@
 ---
 
 ### `TacticalCutoffs.java` (Phase 12 Pillar 1)
-* **Path:** [`src/tablut/engine/TacticalCutoffs.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/TacticalCutoffs.java)
+* **Path:** [`src/tablut/engine/TacticalCutoffs.java`](src/tablut/engine/TacticalCutoffs.java)
 * **Purpose:** High-performance $O(1)$ analytic score-bounded tactical mate cutoffs evaluating forced 1-ply and 2-ply terminal wins/losses before expanding search subtrees.
 * **Key Methods:**
   * `detectForcedTacticalMate(FastState state, int ply)`:
@@ -278,7 +278,7 @@
 ## 4. Parameterized Heuristic Engine (Phase 4, 9, 10, 12, 13, 14 & 15)
 
 ### `HeuristicWeights.java`
-* **Path:** [`src/tablut/engine/HeuristicWeights.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/HeuristicWeights.java)
+* **Path:** [`src/tablut/engine/HeuristicWeights.java`](src/tablut/engine/HeuristicWeights.java)
 * **Purpose:** Container holding all $24$ tunable heuristic parameters for automated optimization (SPSA / GA).
 * **Parameter Breakdown:**
   * **White Parameters:**
@@ -312,7 +312,7 @@
 ---
 
 ### `WhiteHeuristics.java` (Phase 4, 12, 13, 14, 15)
-* **Path:** [`src/tablut/engine/WhiteHeuristics.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/WhiteHeuristics.java)
+* **Path:** [`src/tablut/engine/WhiteHeuristics.java`](src/tablut/engine/WhiteHeuristics.java)
 * **Purpose:** Domain evaluation functions representing the White (Defender) perspective.
 * **Key Features:**
   * **Single-Pass Loop Fusion (Phase 15 Pillar 3):** Unifies `computeKingDefenderShieldCohesion` and `computeWhitePawnDispersionPenalty` into a single 81-square scan in `evaluate`.
@@ -324,7 +324,7 @@
 ---
 
 ### `BlackHeuristics.java` (Phase 4, 12, 14, 15)
-* **Path:** [`src/tablut/engine/BlackHeuristics.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/BlackHeuristics.java)
+* **Path:** [`src/tablut/engine/BlackHeuristics.java`](src/tablut/engine/BlackHeuristics.java)
 * **Purpose:** Domain evaluation functions representing the Black (Attacker) perspective.
 * **Key Features:**
   * **Single-Pass 81-Square Loop Fusion (Phase 15 Pillar 3):** Unifies `countConnectedChains`, `computeBlackMobility`, `computeOpenFieldContainment`, `computeCampPinchTraps`, and `countAbandonedCampCorners` quadrant detection into a single pass over `state.board` in `evaluate`.
@@ -336,7 +336,7 @@
 ---
 
 ### `HeuristicEvaluation.java`
-* **Path:** [`src/tablut/engine/HeuristicEvaluation.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/HeuristicEvaluation.java)
+* **Path:** [`src/tablut/engine/HeuristicEvaluation.java`](src/tablut/engine/HeuristicEvaluation.java)
 * **Purpose:** Unified Negamax evaluation endpoint.
 * **Formula:**
   $$\text{Score}_{\text{White}} = \text{WhiteHeuristics}(S, w) - \text{BlackHeuristics}(S, w)$$
@@ -346,7 +346,7 @@
 ---
 
 ### `BaselineEvaluation.java`
-* **Path:** [`src/tablut/engine/BaselineEvaluation.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/BaselineEvaluation.java)
+* **Path:** [`src/tablut/engine/BaselineEvaluation.java`](src/tablut/engine/BaselineEvaluation.java)
 * **Purpose:** Coarse, ultra-fast static evaluation function used during Phase 2 development and for ablation comparison against Phase 4 heuristics.
 
 ---
@@ -354,7 +354,7 @@
 ## 5. Client Integration & Communication Layer
 
 ### `StateAdapter.java`
-* **Path:** [`src/tablut/engine/StateAdapter.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/StateAdapter.java)
+* **Path:** [`src/tablut/engine/StateAdapter.java`](src/tablut/engine/StateAdapter.java)
 * **Purpose:** High-speed bi-directional bridge between the engine's internal `FastState` and the UNIBO official `it.unibo.ai.didattica.competition.tablut.domain.StateTablut` / `Action`.
 * **API:**
   * `loadFromState(FastState fastState, State officialState)`: Ingests 2D `State.Pawn[9][9]` into flat `byte[81]` and recomputes `zobristHash`.
@@ -364,7 +364,7 @@
 ---
 
 ### `TablutAgentClient.java`
-* **Path:** [`src/tablut/engine/TablutAgentClient.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/TablutAgentClient.java)
+* **Path:** [`src/tablut/engine/TablutAgentClient.java`](src/tablut/engine/TablutAgentClient.java)
 * **Purpose:** Official CLI entry point and TCP socket client for tournament play.
 * **CLI Syntax:** `java tablut.engine.TablutAgentClient <ROLE> [TIMEOUT_SECONDS] [SERVER_IP]`
 * **Key Tournament Invariants:**
@@ -377,7 +377,7 @@
 ---
 
 ### `HeadlessTournament.java`
-* **Path:** [`src/tablut/engine/HeadlessTournament.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/HeadlessTournament.java)
+* **Path:** [`src/tablut/engine/HeadlessTournament.java`](src/tablut/engine/HeadlessTournament.java)
 * **Purpose:** High-throughput match simulator executing balanced matches directly in RAM with zero GUI or networking.
 * **Key Features:**
   * **ThreadLocal Zero-Allocation Context Recycling:** Reuses `EngineContext` (preallocated engines, states, undo structs, move stacks) per thread, completely eliminating 67 MB heap churn per match and zeroing GC pauses during tuning.
@@ -451,7 +451,5 @@
 * **`runmyplayer.sh`** / **`runmyplayer.ps1`**:
   * Official execution wrappers conforming to `/home/tablut/tablut/runmyplayer.sh <ROLE> <TIMEOUT_SECONDS> <SERVER_IP>`.
   * Strict POSIX `LF` line endings for Linux Debian VM execution.
-* **`GEMINI.md`**:
-  * Central reference manual and project specification tracking all milestones, theoretical backgrounds, and competition constraints.
 * **`README.md`**:
   * Main GitHub landing page showcasing architecture diagrams, benchmark tables, and how-to guides.

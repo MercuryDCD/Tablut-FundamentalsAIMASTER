@@ -1,6 +1,6 @@
 # Guía Operativa y Catálogo de Scripts — DajeGeppetto Tablut Engine
 
-Manual centralizado de referencia de todos los scripts, comandos de ejecución, pipelines de entrenamiento y suites de prueba del proyecto. Diseñado para desacoplar las instrucciones operativas de [`README.md`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/README.md) y [`GEMINI.md`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/GEMINI.md).
+Manual centralizado de referencia de todos los scripts, comandos de ejecución, pipelines de entrenamiento y suites de prueba del proyecto. Diseñado para desacoplar las instrucciones operativas de [`README.md`](README.md) y la [Wiki técnica](docs/wiki/Home.md).
 
 ---
 
@@ -33,7 +33,7 @@ Manual centralizado de referencia de todos los scripts, comandos de ejecución, 
 
 ## 2. Compilación y Build
 
-El motor está implementado en Java puro (Java 8+ compatible, testeado en Java 17/21) con dependencias exclusivas en el referee server y las librerías del starter kit oficial en [`TablutCompetition-master/`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/TablutCompetition-master).
+El motor está implementado en Java puro (Java 8+ compatible, testeado en Java 17/21) con dependencias exclusivas en el referee server y las librerías del starter kit oficial en [`TablutCompetition-master/`](TablutCompetition-master).
 
 ### Windows (PowerShell)
 ```powershell
@@ -52,7 +52,7 @@ javac -cp "TablutCompetition-master/Tablut/Executables/Server.jar:TablutCompetit
 
 ## 3. Entrenamiento y Optimización de Pesos Heurísticos (SPSA)
 
-El evaluador lineal utiliza 22 pesos posicionales y tácticos optimizados mediante **Simultaneous Perturbation Stochastic Approximation (SPSA)** sobre el simulador headless en RAM ([`HeadlessTournament.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/HeadlessTournament.java), sin coste de red ni GUI).
+El evaluador lineal utiliza 22 pesos posicionales y tácticos optimizados mediante **Simultaneous Perturbation Stochastic Approximation (SPSA)** sobre el simulador headless en RAM ([`HeadlessTournament.java`](src/tablut/engine/HeadlessTournament.java), sin coste de red ni GUI).
 
 ### 3.1 Pipeline de Entrenamiento Nocturno (`scripts/train_overnight.py`)
 Diseñado para dejar ejecutando durante horas sin supervisión. Automatiza dos fases de optimización y captura señales de interrupción (`Ctrl+C`) de forma segura.
@@ -97,7 +97,7 @@ python scripts/train_overnight.py --dry-run
 * `--depth <D>`: Profundidad de búsqueda minimax en Fase 2 (defecto: `4`).
 * `--games-phase2 <G>`: Partidas por paso SPSA en Fase 2 (defecto: `80`).
 * `--threads <T>`: Hilos de trabajo en paralelo (defecto: todos los vCPUs lógicos).
-* `--auto-apply`: Aplica automáticamente los mejores pesos a [`HeuristicWeights.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/HeuristicWeights.java) y recompila los binarios al terminar.
+* `--auto-apply`: Aplica automáticamente los mejores pesos a [`HeuristicWeights.java`](src/tablut/engine/HeuristicWeights.java) y recompila los binarios al terminar.
 
 ---
 
@@ -130,7 +130,7 @@ python scripts/train_spsa.py --resume --warm-restart --depth 4 --games 80
 ---
 
 ### 3.3 Inyector de Pesos a Java (`scripts/apply_weights.py`)
-Lee el checkpoint generado ([`checkpoint_weights.json`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/checkpoint_weights.json)) e inyecta los valores optimizados directamente en el código fuente de [`HeuristicWeights.java`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/src/tablut/engine/HeuristicWeights.java), recompilando el proyecto inmediatamente.
+Lee el checkpoint generado ([`checkpoint_weights.json`](checkpoint_weights.json)) e inyecta los valores optimizados directamente en el código fuente de [`HeuristicWeights.java`](src/tablut/engine/HeuristicWeights.java), recompilando el proyecto inmediatamente.
 
 ```powershell
 # Aplicar el mejor vector de pesos (best_weights) y recompilar:
@@ -147,7 +147,7 @@ python scripts/apply_weights.py --dry-run
 
 ## 4. Partidas Individuales y Validación Oficial
 
-Ejecutan el servidor oficial ([`Server.jar`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/TablutCompetition-master/Tablut/Executables/Server.jar)), el agente DajeGeppetto y el oponente sobre sockets TCP en puertos 5800/5801.
+Ejecutan el servidor oficial ([`Server.jar`](TablutCompetition-master/Tablut/Executables/Server.jar)), el agente DajeGeppetto y el oponente sobre sockets TCP en puertos 5800/5801.
 
 ### 4.1 Partida Oficial Parametrizable (`scripts/match_official.ps1`)
 Orquesta una partida completa gestionando el ciclo de vida de los procesos, redirección de logs en `logs/` y parada forzada limpia al terminar.
@@ -188,7 +188,7 @@ Comprobación mínima de sanidad end-to-end contra `RandomPlayer.jar`.
 ## 5. Torneos y Benchmarking contra Rivales
 
 ### 5.1 Torneo Multi-Rival (`scripts/tournament_vs_opponents.ps1`)
-Harness de torneo automatizado que enfrenta a DajeGeppetto contra los motores de referencia de la competición UNIBO disponibles en [`competitors/`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/competitors) y [`team/`](file:///c:/Users/Dani/Desktop/MASTER%20IA/Semestre_1/FUNDAMENTALS/TABLUT/team). Garantiza simetría de color (partidas pares alternando White/Black).
+Harness de torneo automatizado que enfrenta a DajeGeppetto contra los motores de referencia de la competición UNIBO disponibles en [`competitors/`](competitors) y [`team/`](team). Garantiza simetría de color (partidas pares alternando White/Black).
 
 * **Rivales configurados:**
   1. `brainmates`: **BrAInmates** (Campeón absoluto del torneo UNIBO 2020).

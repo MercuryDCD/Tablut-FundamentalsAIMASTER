@@ -15,10 +15,10 @@ Tuning heuristic parameters requires playing hundreds of thousands of games to a
 * **ThreadLocal Zero-Allocation Context Recycling (`EngineContext`):**
   Early simulator iterations allocated new search stacks, move generator buffers, and Transposition Tables for every match, generating over 67 MB of heap garbage per game. Under 8 parallel simulator threads, GC pauses throttled CPU execution.
   The simulator introduces an `EngineContext` pool tied to Java `ThreadLocal` storage. Thread workers allocate their state and search buffers exactly once at startup, recycling them across millions of subsequent turns with zero heap churn.
-* **Strict Color Balancing:**
-  Matches are paired in alternating pairs: Game $2k$ pits Parameter Vector $A$ (White) against Vector $B$ (Black); Game $2k+1$ immediately mirrors the matchup with Vector $B$ (White) against Vector $A$ (Black). This eliminates first-player advantage bias from parameter evaluation.
+* **Strict Color Balancing & Common Random Numbers (CRN, Phase 16):**
+  Matches are paired in alternating pairs: Game $2k$ pits Parameter Vector $A$ (White) against Vector $B$ (Black); Game $2k+1$ immediately mirrors the matchup with Vector $B$ (White) against Vector $A$ (Black) using the **exact same deterministic opening seed** (`--seed`). This CRN variance-reduction scheme eliminates opening-draw luck between paired evaluations (identical vectors score exactly `50.00%` by construction) and reports granular `winsAWhite` / `winsABlack` telemetry for color-regression gating.
 * **Opening Tree Diversification:**
-  During the first two plies ($K=2$), moves are sampled uniformly at random from legal candidates, ensuring the simulator explores diverse board states rather than repeating identical deterministic lines.
+  Each paired game opens with `--opening-book-plies 4` followed by `--opening-random-plies 2` legal moves seeded deterministically per pair, ensuring the simulator explores realistic yet diverse middlegames rather than repeating identical lines.
 
 ---
 
@@ -92,33 +92,31 @@ In Tablut, repetitive play can cause engines to drift into sterile, cycling draw
 
 ---
 
-## 3. Curriculum Training & Overnight Pipeline (`scripts/train_overnight.py`)
+## 3. Multi-Stage Depth-5/6 Overnight Pipeline (`scripts/overnight_60s_pipeline.py`)
 
-Tuning all 22 parameters simultaneously at deep search depths without preconditioning can induce gradient noise. The automated multi-night optimization pipeline (`train_overnight.py`) implements a staged two-phase curriculum with anytime interrupt safety:
+Tuning all 24 parameters simultaneously at shallow depths (Depth 3/4) introduces short-horizon bias that fails to generalize to 60s tournament play (Depth 13–18). In Phase 17, we introduced the end-to-end multi-stage Depth-5/6 pipeline (`scripts/overnight_60s_pipeline.py`), complemented by the 2-phase runner (`scripts/train_overnight.py`, upgraded to Depth 5 `white_focus` $\to$ Depth 6 `all`).
 
-### 3.1 Two-Phase Training Strategy
-* **Phase 1: Positional & Acclimatization Warm-up (`--warmup-iters 300`):**
-  - **Search Depth:** Depth 3 + Quiescence search.
-  - **Match Sample:** $N = 60$ games per step with strict color balancing.
-  - **Target Subspace:** 7 key spatial parameters (`kingOpenFieldContainment`, `blackConnectedChains`, `rhombusBlockade`, `campFrontPreserved`, `diamondOccupancy`, `kingDefenderShieldCohesion`, `whitePawnDispersionPenalty`).
-  - **Objective:** Calibrates the relative magnitude of spatial weights without destabilizing macroscopic piece values.
-* **Phase 2: Global Covariance Fine-Tuning (`--depth 4`):**
-  - **Search Depth:** Depth 4 + Quiescence search.
-  - **Match Sample:** $N = 80$ games per step (reducing gradient variance across 22 dimensions).
-  - **Target Subspace:** All 22 parameters tuned simultaneously (`all`).
-  - **Objective:** Eliminates short-horizon Depth 3 bias, tuning compound terms (`kingSafeForkThreat`, `campPinchTraps`, `throneAnvilThreats`). Runs continuously in anytime mode.
+### 3.1 Four-Stage Depth-5/6 Curriculum (Nov 18–19 Run: 38,668 Games)
+1. **Stage 1 (`stage1_d5_white.json` — Depth 5, `white_focus`):** Calibrates the 11 White initiative/escape/cohesion weights (`indices [0, 2, 3, 4, 5, 6, 7, 17, 18, 21, 22]`) with all Black weights strictly frozen (**245 iterations, 17,836 games**, 90.7 min).
+2. **Stage 2A (`stage2a_d6_white.json` — Depth 6, `white_focus`):** Refines White weights under deeper tactical lookahead seeded from Stage 1's best checkpoint (**72 iterations, 3,192 games**, 92.5 min).
+3. **Stage 2B (`stage2b_d5_all.json` — Depth 5, `all` + `black_ok` gate):** Co-tunes all active weights simultaneously while enforcing a strict **Black non-regression promotion gate** (`wr >= 0.52` AND `winsABlack + 1 >= incumbentBlackWins`) (**184 iterations, 16,142 games**, 80.7 min).
+4. **Stage 2C (`stage2c_d6_all.json` — Depth 6, `all`):** Deep polish over the joint parameter space (**33 iterations, 1,498 games**, 52.5 min).
 
-### 3.2 Automated Checkpoint & Safe Termination
-The script supports `--auto-apply`, which handles graceful `Ctrl+C` interrupts:
+### 3.2 Multi-Resolution Championship Shootout & Certified Auto-Apply
+At completion of SPSA optimization:
+1. **Stage 3 (Multi-Resolution Shootout):** All stage peak and EMA checkpoints are evaluated against `v0_pre_night_anchor.json` across Depth 5 (`r1`), unlocked-depth `750ms` (`r2`), and unlocked-depth `1200ms` (`r3`) matches with strict Black safety filtering. In the Nov 18–19 run, **`S2B_d5_all_best`** won (`logs/checkpoints_overnight/selected_winner.json`).
+2. **Stage 4 (Certified Apply & Rollback Guard):** `apply_weights.py` injects the winning vector into `HeuristicWeights.java`, recompiles with `javac -encoding UTF-8`, and executes all **12 Java unit test suites** (automatically rolling back to `v0_pre_night_anchor.json` if any test fails).
+3. **Stage 5 (Official 60s `Server.jar` Validation):** Optional end-to-end 60s/move validation on the official referee server (`--skip-server` to run tuning and unit tests only).
+
 ```bash
-python scripts/train_overnight.py --skip-warmup --depth 4 --auto-apply
+# Run the full Depth-5/6 overnight optimization + 60s validation pipeline
+python scripts/overnight_60s_pipeline.py
 ```
-When interrupted, it atomically writes the current best weights to `checkpoint_weights.json`, invokes `apply_weights.py` to patch `HeuristicWeights.java`, recompiles the Java engine, and verifies test suites.
 
-### 3.3 Warm Restarts & Session-Relative Gain Scheduling
+### 3.3 Warm Restarts, Time Guards & Session-Relative Gain Scheduling
 When resuming training from a saved checkpoint, naive SPSA implementations apply the decayed iteration counter $k$, resulting in near-zero learning rates ($a_k \approx 0$).
 
-`train_spsa.py` implements a `--warm-restart` flag. It preserves the accumulated weight vector from `checkpoint_weights.json` but resets the step-size schedule to an active exploratory range ($a_k \approx 1.50$), allowing the optimizer to escape local plateaus during overnight runs.
+`train_spsa.py` implements `--warm-restart`, custom `--checkpoint` paths, and `--max-minutes` graceful time limits. It preserves the accumulated weight vector while resetting the step-size schedule to an active exploratory range, enabling clean multi-stage chaining with Windows keep-awake protection (`SetThreadExecutionState`).
 
 ---
 
@@ -151,7 +149,7 @@ The script verifies syntax, substitutes the weight constants, triggers a clean b
 
 ## 5. Feature Orthogonality & SVD/PCA Audit (`scripts/analyze_feature_covariance.py`)
 
-In 22-dimensional heuristic spaces, collinearity between features (e.g., `rhombusBlockade` vs. `blackConnectedChains`) can cause SPSA perturbations to cancel each other out, stalling optimization.
+In 24-dimensional heuristic spaces, collinearity between features (e.g., `rhombusBlockade` vs. `blackConnectedChains`) can cause SPSA perturbations to cancel each other out, stalling optimization.
 
 `scripts/analyze_feature_covariance.py` provides an offline audit tool:
 ```bash
@@ -163,14 +161,6 @@ python scripts/analyze_feature_covariance.py --states 20000 --generate
 
 ---
 
-## 6. Pre-Freeze Architecture Freeze & Dedicated SPSA Training Vector
+## 6. Post-Phase 17 Freeze Status
 
-With the completion of Phase 16 and certification against top champions (91.7% score at 30s timeout), all architectural, algorithmic, and data structure development is **formally frozen**.
-
-From this point forward through competition day:
-* **No Java Engine Modifications:** Move generation, search heuristics, opening lines, and concurrency models remain strictly locked.
-* **Exclusive Development Loop:** Compute capacity is dedicated 100% to overnight SPSA training using:
-  ```bash
-  python scripts/train_overnight.py --auto-apply
-  ```
-* This automated loop iteratively refines the 24 numerical parameters in `checkpoint_weights.json` and updates `HeuristicWeights.java`, fine-tuning the engine's evaluation gradient without risking regression in search invariants or rule compliance.
+Following the Phase 17 Depth-5/6 CRN SPSA run (**38,668 games**, selected vector `S2B_d5_all_best`) and full 12-suite Java verification, both the Java engine and the 24 calibrated weights in `HeuristicWeights.java` / `checkpoint_weights.json` are **frozen for tournament submission**.

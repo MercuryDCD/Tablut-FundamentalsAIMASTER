@@ -315,9 +315,11 @@ public final class SearchEngine {
             long elapsedSoFar = depthStartTime - startTimeMs;
 
             // Tier 1: Predictive Soft Cutoff using dynamic effective branching factor
-            if (depth > 1 && elapsedSoFar >= (long) (allocatedTimeMs * 0.45)) {
+            // Only stop early if already past 82% of allocated budget AND remaining time cannot cover
+            // at least 50% of projected next-ply duration (where PV and top tactical moves are searched).
+            if (depth > 1 && elapsedSoFar >= (long) (allocatedTimeMs * 0.82)) {
                 double projectedTime = lastDepthDuration * effectiveBranchingFactor;
-                if (elapsedSoFar + projectedTime > allocatedTimeMs) {
+                if (elapsedSoFar + projectedTime * 0.50 > allocatedTimeMs) {
                     break;
                 }
             }
@@ -355,11 +357,12 @@ public final class SearchEngine {
 
             UndoInfo undo = undoStack[0];
             boolean depthInterrupted = false;
+            boolean bestMoveHangs = false;
 
             while (!depthInterrupted) {
                 bestScoreThisDepth = -BaselineEvaluation.INFINITY;
                 bestMoveThisDepth = Move.NULL_MOVE;
-                boolean bestMoveHangs = false;
+                bestMoveHangs = false;
                 java.util.Arrays.fill(rootMoveScores, 0, numRootMoves, -BaselineEvaluation.INFINITY);
                 int currentAlpha = alpha;
 
@@ -494,7 +497,17 @@ public final class SearchEngine {
                     break;
                 }
             } else {
-                // Iteration was truncated mid-search; discard incomplete depth
+                // Verified Partial-Depth Root Adoption: if hard deadline interrupted depth d after
+                // rootMoves[0] (priorBest) finished and a non-hanging move achieved a complete
+                // in-window PVS score, adopt it instead of discarding partial work.
+                if (bestMoveThisDepth != Move.NULL_MOVE
+                        && rootMoveScores[0] > -BaselineEvaluation.INFINITY
+                        && bestScoreThisDepth > alpha
+                        && bestScoreThisDepth < beta
+                        && !bestMoveHangs) {
+                    bestMoveOverall = bestMoveThisDepth;
+                    bestScoreOverall = bestScoreThisDepth;
+                }
                 break;
             }
         }

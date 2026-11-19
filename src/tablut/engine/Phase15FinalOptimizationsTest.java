@@ -363,7 +363,11 @@ public final class Phase15FinalOptimizationsTest {
                     || (safeForks > 0)
                     || (safeSingles > 0);
             if (weights.kingThroneAbandonPenalty > 0 && !hasUnblockedEscape) {
-                score -= weights.kingThroneAbandonPenalty;
+                if (openCorridors == 1) {
+                    score -= weights.kingThroneAbandonPenalty / 2;
+                } else {
+                    score -= weights.kingThroneAbandonPenalty;
+                }
             }
         }
 
@@ -391,7 +395,9 @@ public final class Phase15FinalOptimizationsTest {
                         int excess = manhattan - 3;
                         disp += excess * excess;
                         if (r <= 1 || r >= 7 || c <= 1 || c >= 7) {
-                            disp += 8;
+                            if (!WhiteHeuristics.isRhombusContestSquare(r, c)) {
+                                disp += 8;
+                            }
                             if (BoardConstants.IS_WIN_SQUARE_FOR_KING[sq]) {
                                 disp += 6;
                             }

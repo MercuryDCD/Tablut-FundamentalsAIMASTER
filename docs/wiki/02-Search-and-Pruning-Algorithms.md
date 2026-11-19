@@ -95,11 +95,11 @@ Evaluating leaf nodes statically triggers the **Horizon Effect**: an engine migh
 `QuiescenceSearch.java` resolves this by extending the search beyond depth 0, strictly examining tactical moves (captures and King escape threats) up to a safety depth of 6 plies:
 
 1. **Stand-Pat Cutoff:** The static evaluation represents a baseline lower bound. If $\text{standPat} \ge \beta$, the node fails high immediately: the opponent would not allow this line.
-2. **Delta Pruning:** If $\text{standPat} + \text{DELTA\_MARGIN} < \alpha$ (with $\text{DELTA\_MARGIN} = 400$), even capturing an opponent soldier cannot raise the score above $\alpha$. The branch is discarded.
-3. **Tactical Bypass:** Delta Pruning is strictly bypassed whenever:
+2. **Dynamic Delta Pruning (Phase 16):** Instead of a fixed static margin (`400` cp), `QuiescenceSearch` computes the delta margin dynamically from the active heuristic material weights (e.g., `whitePiece + whiteCaptured = 514 cp`) so high-value pawn captures are never erroneously pruned.
+3. **Tactical Bypass & Hard-Deadline Cancellation:** Delta Pruning is strictly bypassed whenever:
    * The King is within 2 steps of an escape square (`MIN_DISTANCE_TO_ESCAPE[kingSq] <= 2`).
    * The King is under active capture threat (`isKingThreatened == true`).
-   Bypassing Delta Pruning in these scenarios prevents the search from pruning subtle, non-capture king maneuvers that lead directly to victory or defeat.
+   Additionally, QS nodes directly honor the coordinator's hard-deadline stop signal so deep tactical extensions can never overshoot the move timeout.
 
 ### 2.4 Singular Tactical Extensions in PVS
 Standard Minimax suffers from the uniform horizon effect, failing to calculate combinations that resolve 1 ply beyond the fixed iteration depth $D$. Meanwhile, MCTS naturally searches deep (15–30 plies) along forced tactical lines because visits accumulate on the best path.
@@ -212,6 +212,13 @@ Because piece captures permanently alter piece count, positions before a capture
 
 ---
 
-## 7. Architecture Freeze Status
+## 7. Phase 16 & 17 Search Recalibration & Freeze Status
 
-As of Phase 16, all search and pruning algorithms are **permanently frozen**. Future performance enhancements will derive solely from offline SPSA parameter training on `HeuristicWeights.java`.
+Final search recalibrations were integrated and verified across all 12 Java unit test suites (`Phase16RecalibrationTest.java`):
+
+1. **LMR King-Proximity Guard:** Late Move Reductions (`R = clamp(1, d - 2, floor(0.75 + ln(d)*ln(i)/2.25))`) never reduce quiet moves when the King is threatened or near perimeter escapes, preventing tactical oversights while preserving Depth 13–18 throughput at 60s/move.
+2. **Forced-Loss Protection in `isBetterWorkerResult`:** Helper-worker adoption refuses to overwrite a deeper forced-loss detection with a shallower search result, while preferring an equal-depth non-loss heuristic score over a forced-loss line and favoring lines that delay unavoidable mates longer.
+3. **Zero-Centered Contempt / Draw Evaluation (`HeuristicEvaluation.evaluateDraw`):** Repetition draws are scored relative to `computeInitialWhiteBias(weights)` plus a material-imbalance contempt term (with exact Negamax sign inversion), preventing asymmetric static bias from distorting draw avoidance or fortress holding.
+4. **82% Predictive Soft Cutoff & Verified Partial-Depth Root Adoption:** With `timeSafetyRatio = 0.96` (`57.6s` on a `60s` clock), iterative deepening only triggers an early soft cutoff once `elapsed >= 82%` of the budget AND remaining time cannot cover `50%` of projected next-ply duration (`elapsed + projected * 0.50 > allocated`). If the hard deadline fires mid-iteration after `rootMoves[0]` has finished and a non-hanging candidate achieved a complete in-window PVS score (`alpha < score < beta`), the engine safely adopts that deeper improvement instead of discarding partial work.
+
+With Phase 17 complete and verified, all search and pruning algorithms are **permanently frozen** for competition deployment.
