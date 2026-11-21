@@ -94,9 +94,9 @@ The referee server dynamically configures move timeout limits via command-line a
 
 ### 2.1 The Two-Tier Cutoff Architecture & Partial-Depth Adoption
 1. **Tier 1: Predictive Soft Cutoff with Dynamic $b_{\text{eff}}$ Calibration (Root Level):**
-   Iterative deepening checks before initiating depth iteration $d+1$. Once `elapsedSoFar >= 0.82 * allocatedTimeMs`, it estimates the next depth's cost using a dynamically calibrated effective branching factor:
+   Iterative deepening checks before initiating depth iteration $d+1$. Once `elapsedSoFar >= 0.82 * allocatedTimeMs`, it estimates the next depth's cost using an exponentially smoothed empirical branching factor ($d \ge 3$):
 
-   $$b_{\text{eff}} = \text{clamp}\left(2.2, \, 4.5, \, \frac{T_d}{T_{d-1}}\right)$$
+   $$b_{\text{eff}} \leftarrow 0.65 \, b_{\text{eff}} + 0.35 \cdot \text{clamp}\left(2.2, \, 3.5, \, \frac{T_d}{T_{d-1}}\right)$$
 
    If $T_{\text{elapsed}} + 0.50 \cdot (T_d \times b_{\text{eff}}) > T_{\text{allocated}}$, depth $d+1$ is skipped because remaining time cannot cover even the PV and top tactical moves.
 2. **Tier 2: Emergency Hard Cutoff (Interior Tree Nodes & Quiescence):**
@@ -134,7 +134,7 @@ flowchart LR
     classDef stop fill:#7f1d1d,stroke:#ef4444,color:#fee2e2,stroke-width:1.5px
     classDef adopt fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
 
-    Start["0% Start IDS\nalloc = 0.96*T"]:::ok --> Mid["Depth d Done\nUpdate b_eff\nin [2.2, 4.5]"]:::ok
+    Start["0% Start IDS\nalloc = 0.96*T"]:::ok --> Mid["Depth d Done\nUpdate b_eff\nin [2.2, 3.5]"]:::ok
     Mid --> Soft{"Elapsed>=82% &\nProj > alloc?"}:::warn
     Soft -- "No" --> NextD["Depth d + 1\nPoll /4096"]:::adopt
     Soft -- "Tier 1 Stop" --> ReturnPrev["Return Depth d\nBest Move"]:::ok
@@ -215,7 +215,7 @@ exec java -Xmx4g -Xms512m -XX:+UseG1GC -cp "$CLASSPATH" tablut.engine.TablutAgen
 The engine includes automated orchestration scripts for local certification, baseline smoke testing, and inter-version regression checks:
 
 ### 5.1 Pre-Submission Certification (`scripts/verify_local.ps1` & `scripts/verify_vm.sh`)
-Performs a clean UTF-8 build, verifies LF endings, checks starter-file immutability, runs the core Java test suites, and executes an end-to-end `Server.jar` match against `RandomPlayer.jar`:
+Performs a clean UTF-8 build, verifies LF endings, checks starter-file immutability, runs the **8 core Java certification suites**, and executes an end-to-end `Server.jar` match against `RandomPlayer.jar` (invoked with mixed-case `wHitE`):
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/verify_local.ps1
 ```
@@ -230,7 +230,11 @@ Launches `Server.jar` with DajeGeppetto against `RandomPlayer.jar` or self-play 
 ```
 
 ### 5.3 Inter-Version Regression Harness (`scripts/tournament_versions.ps1` & `scripts/match_versions.ps1`)
-Pits the current working tree against any previous Git commit on `Server.jar` to detect regressions or validate heuristic updates:
+Pits the current working tree (`LOCAL`) against one or more historical Git commits on `Server.jar` to detect regressions or validate heuristic updates:
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/tournament_versions.ps1 -Games 4 -Timeout 15 -Commit HEAD~1
+# Multi-version round-robin across commits + LOCAL:
+powershell -ExecutionPolicy Bypass -File scripts/tournament_versions.ps1 -Commits @("f19e060", "90fe1c0", "LOCAL") -GamesPerPair 2 -Timeout 15
+
+# Quick head-to-head match against HEAD~1:
+powershell -ExecutionPolicy Bypass -File scripts/match_versions.ps1 -Commit HEAD~1 -Games 2 -Timeout 15
 ```

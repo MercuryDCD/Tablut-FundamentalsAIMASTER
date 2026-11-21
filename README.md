@@ -7,7 +7,7 @@ An autonomous, tournament-grade Artificial Intelligence agent engineered to comp
 
 > [!IMPORTANT]
 > **Tournament-Certified Release:**
-> All Java engine components (move generator, search pruning, heuristic evaluation, opening book, and Lazy SMP concurrency layer) are **feature-complete, frozen, and certified** for deployment in the official UNIBO competition VM. The active 24-weight heuristic vector was calibrated via **38,668 Depth-5/6 CRN SPSA self-play games** (`scripts/overnight_60s_pipeline.py`) and verified across all **12 Java unit test suites**.
+> All Java engine components (move generator, search pruning, heuristic evaluation, opening book, and Lazy SMP concurrency layer) are **feature-complete, frozen, and certified** for deployment in the official UNIBO competition VM. The active 24-weight heuristic vector (21 active dimensions after freezing 3 SVD-collinear pairs) was calibrated via **38,668 Depth-5/6 CRN SPSA self-play games** (`scripts/overnight_60s_pipeline.py`) and verified across all **12 pipeline regression suites** (**8 core certification suites** in `verify_local.ps1` / `verify_vm.sh`; **17 Java test suites** total).
 
 ---
 
@@ -54,7 +54,7 @@ flowchart TD
 
     subgraph Fast["Zero-Latency Fast Path (< 5 ms)"]
         FastPath -- "Forced Win" --> Cutoff["TacticalCutoff\n1-Ply / 2-Ply"]:::fast
-        FastPath -- "Turn <= 6 Hit" --> BookLookup["OpeningBook D4\n29 Systems\nε=0 · <0.01ms"]:::fast
+        FastPath -- "Turn <= 6 Hit" --> BookLookup["OpeningBook D4\n117 Canonical\nε=0 · <0.01ms"]:::fast
     end
 
     subgraph Core["Multi-Core Search Core (4 vCPUs · Lazy SMP)"]
@@ -107,13 +107,13 @@ Rather than treating AI algorithms as black boxes, each component in DajeGeppett
 
 ### 3.5 Opening Book with Global $D_4$ Dihedral Symmetry (`OpeningBook.java`)
 * **The Problem:** Tablut has thousands of early game permutations, but computing moves from scratch in turns 1–6 consumes precious clock time.
-* **The Solution:** A square board has complete 8-fold dihedral symmetry (4 rotations and 4 reflections). `OpeningBook` performs a **global $D_4$ symmetry scan** selecting the highest-weight canonical response across all 8 orientations (deterministic $\varepsilon = 0.0$ by default in tournaments), covering **29 canonical systems** with Throne-retention sanitation and flank counter-lines (including `1... e2→g2` responses).
+* **The Solution:** A square board has complete 8-fold dihedral symmetry (4 rotations and 4 reflections). `OpeningBook` performs a **global $D_4$ symmetry scan** selecting the highest-weight canonical response across all 8 orientations (deterministic $\varepsilon = 0.0$ by default in tournaments), covering **29 canonical systems** (**41 opening sequences**, **117 canonical positions**, **936 $D_4$ states**) with Throne-retention sanitation and flank counter-lines (including `1... e2→g2` responses).
 * **The Result:** The agent plays opening moves in **< 0.01 ms**, saving 100% of its time budget for the complex middlegame.
 
 ### 3.6 Parameterized Linear Heuristics & Depth-5/6 CRN SPSA Training
 * **The Problem:** Running on pure 4-vCPU hardware without GPU acceleration requires an evaluation function fast enough to sustain deep search (**Depth 13–18**, 100M–340M nodes/move at 60s) and resolve multi-ply forced mates and escape forks cleanly.
 * **The Solution:** We engineered **24 domain-specific features** (escape corridors, 2-way forks, `SAFE_FORKS`, Rhombus blockades with White Rhombus-contest exemption, camp preservation, graduated Throne-abandon protection, shield cohesion, zero-centered draw contempt, and open-field swarm pressure) running at **30.9 million evaluations/sec**.
-* **Multi-Stage CRN SPSA Tuning:** Using **Common Random Numbers (CRN)** paired evaluation, Black non-regression gating, and a 4-stage Depth-5/6 pipeline (`scripts/overnight_60s_pipeline.py`), the active weights were distilled from 38,668 self-play games.
+* **Multi-Stage CRN SPSA Tuning:** Using **Common Random Numbers (CRN)** paired evaluation, SVD collinearity freezing (21 active orthogonal weights), Black non-regression gating, and a 4-stage Depth-5/6 pipeline (`scripts/overnight_60s_pipeline.py`), the active weights were distilled from 38,668 self-play games.
 
 <p align="center">
   <img src="docs/assets/spsa_pipeline.svg" alt="Phase 17 Multi-Stage Depth-5/6 CRN SPSA Curriculum and Engine KPIs" width="100%"/>
@@ -135,7 +135,7 @@ Iterative profiling, self-play testing, and game-tree diagnostics shaped several
 ## 5. Quickstart & How to Run
 
 ### 5.1 Prerequisites
-* Java 17+ (Java 8 bytecode compatible)
+* Java 17+ (`VarHandle` array support from Java 9+, tested on Java 17/21)
 * Python 3.10+ (for training and verification scripts)
 * PowerShell (Windows) or Bash (Linux / macOS)
 

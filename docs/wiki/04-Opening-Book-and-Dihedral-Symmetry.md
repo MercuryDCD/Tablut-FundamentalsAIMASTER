@@ -74,9 +74,9 @@ Rather than storing every opening move in all eight orientations, the opening bo
 $$\text{CanonicalHash}(S) = \min_{k=0}^{7} \text{ZobristHash}(\text{Transform}_k(S))$$
 
 This 8-fold reduction reduces memory footprint:
-* 24 canonical opening lines spanning turns 1 through 5.
-* 98 canonical states stored in memory.
-* **784 reachable board positions** recognized instantaneously at run-time.
+* **29 canonical opening systems** (**41 `addLine` sequences** spanning turns 1 through 6).
+* **117 canonical states** stored in memory (`OpeningBook.size() == 117`).
+* **936 reachable $D_4$-symmetric board positions** recognized instantaneously at run-time.
 
 ---
 
@@ -140,16 +140,18 @@ Total lookup latency is **$< 0.01 \text{ ms}$** (typically sub-microsecond on mo
 
 ### 3.2 Dual Operational Modes
 `OpeningBook.java` supports two operational modes:
-* **Deterministic Greedy Mode (`greedy = true`):**
-  Used during official tournament matches. Always selects the move with the highest empirical win-rate weight for the canonical state.
+* **Deterministic Greedy Mode (`greedy = true`, default `epsilon = 0.0`):**
+  Used during official tournament matches. Scans all 8 $D_4$ symmetries globally and always selects the move with the highest empirical weight (`epsilon > 0.0` enables optional $\varepsilon$-greedy exploration among alternative valid book moves).
 * **Weighted Stochastic Sampling (`greedy = false`):**
   Used during automated SPSA parameter tuning. Candidate book moves are sampled probabilistically based on their relative weights, introducing game tree variety into training self-play matches.
 
 ---
 
-## 4. Automated Opening Mining Pipeline (`scripts/mine_openings.py`)
+## 4. Automated Opening Mining & Exploration (`mine_openings.py` & `BookBuilder.java`)
 
-To systematically discover and expand high-leverage opening variations from recorded match logs, the engine incorporates an automated opening log miner:
+To systematically discover and expand high-leverage opening variations from both recorded matches and deep search, the engine incorporates two offline tools:
+* **`BookBuilder.java`:** Runs 4-thread `ParallelSearchEngine` continuations (Depth 6–7) from canonical openings and outputs verified `addLine(...)` snippets.
+* **`scripts/mine_openings.py`:** Automated referee log parser:
 
 ```bash
 python scripts/mine_openings.py --logs-dir logs --max-plies 6 --min-winrate 0.70

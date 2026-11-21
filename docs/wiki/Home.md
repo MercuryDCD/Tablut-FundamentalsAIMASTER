@@ -57,13 +57,13 @@ The engine relies on a modular, zero-allocation design optimized for cache local
 | **Tree Traversal** | Negamax $\alpha$-$\beta$, Iterative Deepening (Depth 13–18 @ 60s), PVS, Aspiration Windows ($\Delta=120$), LMR (King-proximity guarded), Singular Extensions, Partial-Depth Adoption | **>25,000,000 NPS** (100M–340M nodes/move @ 60s) |
 | **Tactical Cutoffs** | $O(1)$ analytic score-bounded mate & escape pruning (`TacticalCutoffs.java`) | **0-node instant cutoff** (0–6 ms) |
 | **Transposition Table** | 2-Slot Bucket (Depth-Preferred / Always-Replace), `VarHandle` Opaque Hyatt Lockless XOR, $2^{23}$ entries | **134 MB RAM**, 0 locks, 0 torn reads |
-| **Opening Book** | Global $D_4$ Dihedral symmetry best-weight lookup (deterministic $\varepsilon=0.0$), Throne retention, Outer-cross sanitization, Line 29 flank counters | **<0.01 ms** response time |
-| **Heuristics** | 24 SPSA-calibrated features (`S2B_d5_all_best`), single-pass loop fusion, graduated Throne-abandon & Rhombus-contest exemption, zero-centered draw contempt | **30,940,593 evals/sec** |
+| **Opening Book** | Global $D_4$ Dihedral symmetry best-weight lookup (deterministic $\varepsilon=0.0$): 29 canonical systems (41 lines, 117 canonical / 936 $D_4$ states), Throne retention, Line 29 flank counters | **<0.01 ms** response time |
+| **Heuristics** | 24 SPSA-calibrated features (21 active orthogonal dims in SPSA; `S2B_d5_all_best`), single-pass loop fusion, graduated Throne-abandon & Rhombus-contest exemption, zero-centered draw contempt | **30,940,593 evals/sec** |
 | **Concurrency** | Lazy SMP across 4 vCPUs with forced-loss-protected `isBetterWorkerResult`, zero-allocation context recycling, `VarHandle` Hyatt XOR TT | **3.85x speedup** on 4 vCPUs |
 | **Memory Allocation** | Zero heap allocation in search loops; preallocated stack arrays and structs | **0 bytes/sec** GC pressure |
 | **Move Ordering** | 5-tier cascade: TT PV $\to$ Winning Moves $\to$ Captures $\to$ Killers $\to$ History + Root Minimax Score Sort | **40.5x** node pruning factor |
-| **Tactical Search** | Quiescence search with stand-pat, dynamic delta margin, deadline cancellation, full tactical sorting, and distance $\le 2$ King escape extensions | Horizon effect resolved |
-| **Development Status** | **Tournament-Certified Release (Phase 17):** Frozen Java engine + Depth-5/6 CRN SPSA weights (`38,668` self-play games), 12/12 Java test suites passing | Submission-ready for UNIBO VM |
+| **Tactical Search** | Quiescence search with stand-pat, dynamic delta margin, `qsPly == 0` quiet escape extension, deadline stop, and full tactical sorting | Horizon effect resolved |
+| **Development Status** | **Tournament-Certified Release (Phase 17):** Frozen Java engine + Depth-5/6 CRN SPSA weights (`38,668` self-play games), 8 core / 12 pipeline / 17 total Java test suites passing | Submission-ready for UNIBO VM |
 
 ```mermaid
 ---

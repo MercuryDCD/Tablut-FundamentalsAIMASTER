@@ -18,7 +18,7 @@ flowchart LR
 
     S1["1. Deploy to\n/home/tablut"]:::step --> S2["2. UTF-8 Build\n& LF Sanitize"]:::step
     S2 --> S3["3. verify_vm\nCore + Smoke"]:::check
-    S3 --> S4["4. 10-Rule\nAudit (12/12)"]:::check
+    S3 --> S4["4. 10-Rule\nAudit (8/12)"]:::check
     S4 --> S5["5. clean_vm.sh\n& Power Off"]:::clean
     S5 --> S6["6. Export .ova\n& SHA-256"]:::ship
 ```
@@ -31,7 +31,7 @@ The evaluation framework executes all matches within an isolated VirtualBox virt
 
 | Specification | Official Constraint | Agent Implementation / Safety Margin |
 | :--- | :--- | :--- |
-| **Operating System** | Debian Linux 64-bit | Pure Java 8+ bytecode, POSIX LF execution wrapper |
+| **Operating System** | Debian Linux 64-bit | Pure Java 9+ (`VarHandle`, tested on Java 17/21), POSIX LF execution wrapper |
 | **Compute / vCPUs** | **4 vCPUs** | 4-thread Lazy SMP search coordinator (`ParallelSearchEngine`) |
 | **System Memory** | **8 GB RAM** | Zero-allocation search; Transposition Table sized to 134 MB |
 | **Disk Storage** | **30 GB max** | Silent stdout/stderr output; zero logging to disk in production |
@@ -99,7 +99,7 @@ The official competition runner strictly executes players from the fixed directo
 The engine is built in standard Java and links directly against the official referee server archive (`Server.jar`) and libraries located in `TablutCompetition-master/`.
 
 ### Step 3.1: Verify Java Development Kit
-Confirm that Java 8 or higher is installed and active:
+Confirm that Java 9 or higher (Java 17/21 recommended; required by `VarHandle` in `TranspositionTable.java`) is installed and active:
 ```bash
 java -version
 javac -version
@@ -284,10 +284,10 @@ Verify that the engine does not play suicidal Throne evacuations on Move 3:
 ```bash
 java -cp "bin:TablutCompetition-master/Tablut/Executables/Server.jar:TablutCompetition-master/Tablut/lib/*" tablut.engine.OpeningBookTest
 ```
-* **Expected Result:** 100% of opening book unit tests pass, confirming all 24 canonical lines keep the King anchored on `e5` while defenders clear corridors.
+* **Expected Result:** 100% of opening book unit tests pass, confirming all **29 canonical systems** (**41 lines, 117 canonical states, 936 $D_4$ positions**) keep the King anchored on `e5` while defenders clear corridors.
 
 ### Invariant 9: Comprehensive Regression Suite Pass
-Run the full engine regression test battery inside the VM (or via `./scripts/verify_vm.sh`):
+Run the 12 pipeline regression suites inside the VM (beyond the 8 core suites already executed by `./scripts/verify_vm.sh`; 17 test classes exist in `src/tablut/engine/`):
 ```bash
 cd /home/tablut/tablut
 CP="bin:TablutCompetition-master/Tablut/Executables/Server.jar:TablutCompetition-master/Tablut/lib/*"
@@ -377,7 +377,7 @@ Examples:
 /home/tablut/tablut/runmyplayer.sh wHitE 15 192.168.20.101
 
 4. TECHNICAL SPECIFICATIONS & HIGHLIGHTS:
-- Architecture: Zero-allocation Java 8+ engine utilizing Negamax PVS + LMR search,
+- Architecture: Zero-allocation Java 9+ engine utilizing Negamax PVS + LMR search,
   aspiration windows (delta=120), singular tactical extensions, dynamic b_eff
   calibration, 96% time safety ratio, and Verified Partial-Depth Root Adoption.
 - Concurrency: 4-thread Lazy SMP utilizing Robert Hyatt's lockless XOR Transposition

@@ -119,13 +119,13 @@ Tuning all 24 parameters simultaneously at shallow depths (Depth 3/4) introduces
 
 1. **Stage 1 (`stage1_d5_white.json` — Depth 5, `white_focus`):** Calibrates the 11 White initiative/escape/cohesion weights (`indices [0, 2, 3, 4, 5, 6, 7, 17, 18, 21, 22]`) with all Black weights strictly frozen (**245 iterations, 17,836 games**, 90.7 min).
 2. **Stage 2A (`stage2a_d6_white.json` — Depth 6, `white_focus`):** Refines White weights under deeper tactical lookahead seeded from Stage 1's best checkpoint (**72 iterations, 3,192 games**, 92.5 min).
-3. **Stage 2B (`stage2b_d5_all.json` — Depth 5, `all` + `black_ok` gate):** Co-tunes all active weights simultaneously while enforcing a strict **Black non-regression promotion gate** (`wr >= 0.52` AND `winsABlack + 1 >= incumbentBlackWins`) (**184 iterations, 16,142 games**, 80.7 min).
-4. **Stage 2C (`stage2c_d6_all.json` — Depth 6, `all`):** Deep polish over the joint parameter space (**33 iterations, 1,498 games**, 52.5 min).
+3. **Stage 2B (`stage2b_d5_all.json` — Depth 5, `all` + `black_ok` gate):** Co-tunes the **21 active weights** (`COLLINEAR_INDICES = {1, 9, 13}` frozen to avoid linear redundancy with `blackPiece`, `whitePiece`, `kingDistance`) while enforcing a strict **Black non-regression promotion gate** (`wr >= 0.52` AND `winsABlack + 1 >= incumbentBlackWins`) (**184 iterations, 16,142 games**, 80.7 min).
+4. **Stage 2C (`stage2c_d6_all.json` — Depth 6, `all`):** Deep polish over the joint 21D active parameter space (**33 iterations, 1,498 games**, 52.5 min).
 
 ### 3.2 Multi-Resolution Championship Shootout & Certified Auto-Apply
 At completion of SPSA optimization:
 1. **Stage 3 (Multi-Resolution Shootout):** All stage peak and EMA checkpoints are evaluated against `v0_pre_night_anchor.json` across Depth 5 (`r1`), unlocked-depth `750ms` (`r2`), and unlocked-depth `1200ms` (`r3`) matches with strict Black safety filtering. In the Nov 18–19 run, **`S2B_d5_all_best`** won (`logs/checkpoints_overnight/selected_winner.json`).
-2. **Stage 4 (Certified Apply & Rollback Guard):** `apply_weights.py` injects the winning vector into `HeuristicWeights.java`, recompiles with `javac -encoding UTF-8`, and executes all **12 Java unit test suites** (automatically rolling back to `v0_pre_night_anchor.json` if any test fails).
+2. **Stage 4 (Certified Apply & Rollback Guard):** `apply_weights.py` injects the winning vector into `HeuristicWeights.java`, recompiles with `javac -encoding UTF-8`, and executes all **12 pipeline regression suites** (out of 17 total test suites; automatically rolling back to `v0_pre_night_anchor.json` if any test fails).
 3. **Stage 5 (Official 60s `Server.jar` Validation):** Optional end-to-end 60s/move validation on the official referee server (`--skip-server` to run tuning and unit tests only).
 
 ```bash

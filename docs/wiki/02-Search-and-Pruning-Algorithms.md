@@ -109,19 +109,20 @@ Evaluating leaf nodes statically triggers the **Horizon Effect**: an engine migh
 `QuiescenceSearch.java` resolves this by extending the search beyond depth 0, strictly examining tactical moves (captures and King escape threats) up to a safety depth of 6 plies:
 
 1. **Stand-Pat Cutoff:** The static evaluation represents a baseline lower bound. If $\text{standPat} \ge \beta$, the node fails high immediately: the opponent would not allow this line.
-2. **Dynamic Delta Pruning (Phase 16):** Instead of a fixed static margin (`400` cp), `QuiescenceSearch` computes the delta margin dynamically from the active heuristic material weights (e.g., `whitePiece + whiteCaptured = 514 cp`) so high-value pawn captures are never erroneously pruned.
-3. **Tactical Bypass & Hard-Deadline Cancellation:** Delta Pruning is strictly bypassed whenever:
+2. **Dynamic Delta Pruning (Phase 16):** Instead of a fixed static margin (`400` cp), `QuiescenceSearch` computes `maxPawnGain = Math.max(whitePiece + whiteCaptured, blackPiece + blackCaptured)` (`514 cp` with Phase 17 weights) and sets `effectiveDelta = Math.max(400, maxPawnGain + 200)` (`714 cp`), ensuring high-value pawn captures are never erroneously pruned.
+3. **Tactical Bypass, `qsPly == 0` Escape Extension & Hard-Deadline Cancellation:** Delta Pruning is strictly bypassed whenever:
    * The King is within 2 steps of an escape square (`MIN_DISTANCE_TO_ESCAPE[kingSq] <= 2`).
    * The King is under active capture threat (`isKingThreatened == true`).
-   Additionally, QS nodes directly honor the coordinator's hard-deadline stop signal so deep tactical extensions can never overshoot the move timeout.
+   Additionally, at root QS ply (`qsPly == 0`), quiet King moves reaching `MIN_DISTANCE_TO_ESCAPE[to] <= 2` are included without triggering QS tree explosion, and QS nodes poll `hardDeadlineMs` / `coordinator.stopped` every `1024` nodes (`(qsNodes & 1023) == 0`).
 
 ### 2.4 Singular Tactical Extensions in PVS
 Standard Minimax suffers from the uniform horizon effect, failing to calculate combinations that resolve 1 ply beyond the fixed iteration depth $D$. Meanwhile, MCTS naturally searches deep (15–30 plies) along forced tactical lines because visits accumulate on the best path.
 
-To bridge this gap without tree explosion, `SearchEngine.java` incorporates **Singular Tactical Extensions**:
-* At interior nodes in `pvs()`: If the search encounters a position where only 1 legal candidate move prevents an immediate King escape or King capture, or if the TT best move's score dominates the second-best move by a significant margin ($\Delta \ge 250$ cp), the remaining depth is extended by $+1$ ply ($d \gets d + 1$).
-* **Cumulative Extension Cap:** Maximum cumulative extensions along any single branch are strictly capped at $+3$ plies.
-* **Impact:** Forced King escape or capture combinations are explored to effective depths of 12–15 plies without increasing branching across quiet quiescent subtrees.
+To bridge this gap without tree explosion, `SearchEngine.java` and `ParallelSearchEngine.java` incorporate **Singular Tactical Extensions**:
+* At interior nodes in `negamax()` (when `extensions < 1`, `depth > 0`, and `ply < MAX_DEPTH - 2`), remaining depth is extended by $+1$ ply (`nextDepth = depth` instead of `depth - 1`) if:
+  * The active side has only 1 legal move (`numMoves == 1`), OR
+  * Near the horizon (`depth <= 2`), Black faces a White King outside the Throne with exactly `1` open escape corridor (`TacticalCutoffs.countKingEscapeCorridors == 1`), OR White faces imminent King custodian danger (`WhiteHeuristics.evaluateKingVulnerability >= 4`).
+* **Cumulative Extension Cap:** Strictly capped at `extensions < 1` (at most `+1` ply extension per branch) to prevent search tree explosion while resolving forced tactical rescues cleanly.
 
 ### 2.5 $O(1)$ Score-Bounded Analytic Mate Cutoffs (`TacticalCutoffs.java`)
 Deep tree search is redundant when the terminal outcome can be mathematically proven at the root or shallow plies. `TacticalCutoffs.java` evaluates geometric primitives in $O(1)$ time:
@@ -134,12 +135,12 @@ Iterative deepening soft cutoffs rely on predicting the time required for iterat
 
 $$T_{d+1} \approx T_d \times b_{\text{eff}}$$
 
-Rather than assuming a static branching constant (which can lead to timeouts or under-utilized time budgets), `SearchEngine.java` computes the empirical effective branching factor dynamically from previous depth ratios:
+Rather than assuming a static branching constant (which can lead to timeouts or under-utilized time budgets), `SearchEngine.java` and `ParallelSearchEngine.java` update the empirical effective branching factor via exponential smoothing from previous depth durations ($d \ge 3$):
 
-$$b_{\text{eff}} = \text{clamp}\left(2.2, \, 4.5, \, \frac{T_d}{T_{d-1}}\right)$$
+$$b_{\text{eff}} \leftarrow 0.65 \, b_{\text{eff}} + 0.35 \cdot \text{clamp}\left(2.2, \, 3.5, \, \frac{T_d}{T_{d-1}}\right)$$
 
-* When pruning is highly effective ($T_d / T_{d-1} < 2.5$), the engine safely launches deeper iterations that would otherwise be rejected by static thresholds.
-* When tactical branching flares up ($T_d / T_{d-1} > 4.0$), $b_{\text{eff}}$ tightens, preventing the engine from starting an iteration that cannot finish within the timeout budget.
+* When pruning is highly effective ($T_d / T_{d-1} \approx 2.2$), $b_{\text{eff}}$ decays smoothly, letting the engine launch deeper iterations that static thresholds would reject.
+* When tactical branching flares up ($T_d / T_{d-1} \ge 3.5$), $b_{\text{eff}}$ rises toward `3.5`, preventing the engine from starting an iteration that cannot cover at least 50% of projected depth time.
 
 ---
 
@@ -167,10 +168,10 @@ The engine uses on-demand lazy selection (`selectBest`):
 If move 0 or 1 causes a cutoff, the remaining 40+ candidate moves are never sorted, eliminating over 90% of move-ordering overhead at cut-nodes.
 
 ### 3.2 Root Anti-Hanging Move Tie-Breaker
-At the root of the search, multiple candidate moves often return very similar minimax scores ($\Delta \le 30$ cp). However, quiet positional moves may leave a friendly piece tactically exposed (*en prise*) to immediate custodian capture on the very next ply.
+At the root of the search, multiple candidate moves often return very similar minimax scores ($\Delta \le 30$ cp, `ANTI_HANGING_TIE_TOLERANCE = 30`). However, quiet positional moves may leave a friendly piece tactically exposed (*en prise*) to immediate custodian capture on the very next ply.
 
-To avoid tactical blunders, `leavesFriendlyPieceHanging(rootState, move)` performs a 1-ply tactical exposure test:
-* If the highest-scoring candidate leaves a friendly piece hanging and a non-hanging alternative exists within the score tolerance window ($\Delta \le 30$ cp), the engine selects the tactically secure move.
+To avoid tactical blunders without false positives on pre-existing threats, `leavesFriendlyPieceHanging(rootState, move)` uses a zero-allocation `ThreadLocal<HangingContext>` and 64-bit threatened-square bitmasks (`maskLo`/`maskHi`) to compare pre-move vs. post-move threats (`postMask & ~preMask`, plus whether the moved piece itself hangs):
+* If the highest-scoring candidate leaves a friendly piece hanging and a non-hanging alternative within $\Delta \le 30$ cp passes a 1-ply null-window verification (`-negamax(depth - 1, -threshold, -(threshold - 1))`), the engine selects the tactically secure move.
 * This tie-breaker dramatically reduces piece blunders in equal or slightly superior endgames.
 
 ---
@@ -228,7 +229,7 @@ Because piece captures permanently alter piece count, positions before a capture
 
 ## 7. Phase 16 & 17 Search Recalibration & Freeze Status
 
-Final search recalibrations were integrated and verified across all 12 Java unit test suites (`Phase16RecalibrationTest.java`):
+Final search recalibrations were integrated and verified across all **12 pipeline regression suites** (**8 core certification suites**, **17 test classes total**, including `Phase16RecalibrationTest.java`):
 
 1. **LMR King-Proximity Guard:** Late Move Reductions (`R = clamp(1, d - 2, floor(0.75 + ln(d)*ln(i)/2.25))`) never reduce quiet moves when the King is threatened or near perimeter escapes, preventing tactical oversights while preserving Depth 13–18 throughput at 60s/move.
 2. **Forced-Loss Protection in `isBetterWorkerResult`:** Helper-worker adoption refuses to overwrite a deeper forced-loss detection with a shallower search result, while preferring an equal-depth non-loss heuristic score over a forced-loss line and favoring lines that delay unavoidable mates longer.

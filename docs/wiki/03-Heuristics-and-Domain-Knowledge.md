@@ -94,7 +94,7 @@ Evaluating static 1-step escape rays is insufficient: by the time White creates 
 * Identifies intermediate destination squares $S$ reachable by the King in 1 legal slide.
 * Checks whether landing on $S$ creates $\ge 2$ unblocked orthogonal rays to perimeter escapes.
 * Verifies tactical safety via `isSafeForkSquare`: confirms that $S$ is not capturable by Black on the immediate reply ply.
-* Awards a major tactical bonus (`kingSafeForkThreat = 447` after Depth-5/6 SPSA calibration), steering White search branches toward positions that set up unstoppable 2-way forks on the following turn.
+* Awards a major tactical bonus (`kingSafeForkThreat = 447` after Depth-5/6 SPSA calibration), steering White search branches toward positions that set up unstoppable 2-way forks on the following turn. When `safeForks == 0`, `computeKingSafeSingleCorridors` also awards `kingSafeForkThreat / 3` for safe 1-step single-corridor setups.
 
 ### 3.5 Defender Shield Cohesion, Dispersion & Rhombus-Contest Exemption
 In human expert play and champion engines, White defenders do not wander across the board: they form a tight protective escort around the King.
@@ -111,9 +111,9 @@ $$\text{DispersionPenalty} = \sum_{w \in \text{WhitePawns}, \, d(w, K) > 3} (d_{
 * **Throne Anvil Threats (`throneAnvilThreats`):** When the King vacates `e5`, the center Throne becomes an impassable hostile barrier for both sides. Black leverages this geometry by placing White defenders between Black soldiers and `e5`, threatening captures with the Throne as an anvil.
 
 ### 3.7 Feature Covariance & SVD/PCA Audit (`analyze_feature_covariance.py`)
-To prevent collinearity and gradient cancellation during SPSA tuning (where correlated parameters oscillate without improving strength), `scripts/analyze_feature_covariance.py` evaluates feature matrix $\mathbf{X} \in \mathbb{R}^{N \times 24}$ across 20,000 self-play board states generated via `FeatureMatrixGenerator.java`:
+To prevent collinearity and gradient cancellation during SPSA tuning (where correlated parameters oscillate without improving strength), `scripts/analyze_feature_covariance.py` evaluates feature matrix $\mathbf{X} \in \mathbb{R}^{N \times 24}$ across self-play board states generated via `FeatureMatrixGenerator.java`:
 * Computes Pearson correlation matrix $\mathbf{R}$ and condition number $\kappa(\mathbf{X})$.
-* Verifies that all 24 features maintain low collinearity, ensuring mathematical orthogonality and clean gradient descent during multi-stage SPSA training runs.
+* Identifies the 3 exact linear dependencies (`|r| = 1.000`: `blackCaptured` $\leftrightarrow$ `blackPiece`, `whiteCaptured` $\leftrightarrow$ `whitePiece`, `kingContainment` $\leftrightarrow$ `kingDistance`), which SPSA freezes (`COLLINEAR_INDICES = {1, 9, 13}`), leaving **21 active orthogonal dimensions** during multi-stage CRN SPSA optimization.
 
 ---
 
