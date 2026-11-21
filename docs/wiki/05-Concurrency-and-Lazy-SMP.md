@@ -17,19 +17,20 @@ Parallelizing alpha-beta search on shared-memory multi-core systems is tradition
    All available worker threads execute independent Iterative Deepening Searches starting from the root position. The threads do not communicate directly, do not pass messages, and do not lock tree nodes. Instead, they interact exclusively by reading and writing to a single, globally shared **Transposition Table**.
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false}}}%%
 flowchart TD
     classDef coord fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
     classDef worker fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
     classDef tt fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
     classDef merge fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
 
-    Coord["ParallelSearchEngine Coordinator<br/>(4 vCPUs · Shared volatile stopped Flag)"]:::coord
+    Coord["ParallelSearchEngine Coordinator\n(4 vCPUs · Shared volatile stopped Flag)"]:::coord
 
     subgraph Workers["Diversified Lazy SMP Worker Pool"]
-        W0["Master Thread 0<br/>IDS: d = 1, 2, 3...<br/>Root Order: (i + 0) mod N"]:::worker
-        W1["Helper Thread 1<br/>IDS: d = 2, 3, 4...<br/>Root Order: (i + 1) mod N"]:::worker
-        W2["Helper Thread 2<br/>IDS: d = 1, 2, 3...<br/>Root Order: (i + 2) mod N"]:::worker
-        W3["Helper Thread 3<br/>IDS: d = 2, 3, 4...<br/>Root Order: (i + 3) mod N"]:::worker
+        W0["Master Thread 0\nIDS: d = 1, 2, 3...\nRoot Order: (i + 0) mod N"]:::worker
+        W1["Helper Thread 1\nIDS: d = 2, 3, 4...\nRoot Order: (i + 1) mod N"]:::worker
+        W2["Helper Thread 2\nIDS: d = 1, 2, 3...\nRoot Order: (i + 2) mod N"]:::worker
+        W3["Helper Thread 3\nIDS: d = 2, 3, 4...\nRoot Order: (i + 3) mod N"]:::worker
     end
 
     Coord --> W0
@@ -37,18 +38,18 @@ flowchart TD
     Coord --> W2
     Coord --> W3
 
-    TT[("Global Lockless Transposition Table<br/>2²³ Entries (~134 MB) · 2-Slot Buckets<br/>VarHandle Opaque + Hyatt XOR")]:::tt
+    TT[("Global Lockless Transposition Table\n2²³ Entries (~134 MB) · 2-Slot Buckets\nVarHandle Opaque + Hyatt XOR")]:::tt
 
     W0 <--> TT
     W1 <--> TT
     W2 <--> TT
     W3 <--> TT
 
-    W0 --> Join["chooseBestWorker() + isBetterWorkerResult()<br/>(Forced-Loss Protected · Partial-Depth Adoption)"]:::merge
+    W0 --> Join["chooseBestWorker() + isBetterWorkerResult()\n(Forced-Loss Protected · Partial-Depth Adoption)"]:::merge
     W1 --> Join
     W2 --> Join
     W3 --> Join
-    Join --> Park["Join &amp; Park All Threads -> 0.0% CPU on Opponent Turn"]:::coord
+    Join --> Park["Join & Park All Threads -> 0.0% CPU on Opponent Turn"]:::coord
 ```
 
 ### 1.1 Why Lazy SMP Wins
@@ -114,6 +115,7 @@ if ((lock ^ data) == zobristHash) {
 If a concurrent thread overwrites `tableData[index]` during a read, the relationship `(lock ^ data) == zobristHash` breaks with near certainty (collision probability $2^{-64}$). The read simply registers as a harmless cache miss. The thread falls back to computing the search branch normally, avoiding corrupted evaluations without requiring mutex locks.
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false}}}%%
 flowchart TD
     classDef write fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
     classDef mem fill:#3b0764,stroke:#a855f7,color:#f3e8ff,stroke-width:1.5px
@@ -123,7 +125,7 @@ flowchart TD
     classDef miss fill:#7f1d1d,stroke:#ef4444,color:#fee2e2,stroke-width:1.5px
 
     subgraph Writer["Thread 0 (Lockless Writer)"]
-        W1["Compute zobristHash &amp; pack 64-bit tableData"]:::write --> W2["DATA_VH.setOpaque(tableData, slotIdx, data)"]:::write
+        W1["Compute zobristHash & pack 64-bit tableData"]:::write --> W2["DATA_VH.setOpaque(tableData, slotIdx, data)"]:::write
         W2 --> W3["LOCK_VH.setOpaque(tableLocks, slotIdx, zobristHash ^ data)"]:::write
     end
 

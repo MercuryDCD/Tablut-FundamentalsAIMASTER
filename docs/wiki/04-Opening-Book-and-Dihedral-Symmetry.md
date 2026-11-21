@@ -40,6 +40,7 @@ For each square $\text{sq} = r \times 9 + c$:
 | **7** | **Anti-Diagonal Reflection** | $(8 - c, 8 - r)$ |
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false}}}%%
 flowchart TD
     classDef state fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
     classDef sym fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
@@ -54,11 +55,11 @@ flowchart TD
         Loop --> Ref["4 Reflections: Horiz, Vert, Main Diag, Anti-Diag"]:::sym
     end
 
-    Rot --> HashCalc["Compute Zobrist Hash_k &amp; Probe Book Table"]:::probe
+    Rot --> HashCalc["Compute Zobrist Hash_k & Probe Book Table"]:::probe
     Ref --> HashCalc
 
-    HashCalc --> BestScan{"Global Best-Weight Match<br/>across all 8 Orientations?"}:::dec
-    BestScan -- "Hit (Phase 16 Global Scan)" --> MapBack["Project Canonical Move via<br/>INVERSE_TRANSFORM[bestSym]"]:::fast
+    HashCalc --> BestScan{"Global Best-Weight Match\nacross all 8 Orientations?"}:::dec
+    BestScan -- "Hit (Phase 16 Global Scan)" --> MapBack["Project Canonical Move via\nINVERSE_TRANSFORM[bestSym]"]:::fast
     MapBack --> BestMove["Execute Deterministic Reply (ε = 0.0) in < 0.01 ms"]:::fast
     BestScan -- "Miss" --> Fallback["Fallback to 4-vCPU Lazy SMP Search"]:::state
 ```

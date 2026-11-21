@@ -128,6 +128,7 @@ To conform to the Negamax convention (where the score is always expressed relati
 $$\text{Evaluate}(S) = \begin{cases} +\text{Score}_{\text{White}}(S), & \text{if } \text{turn} = \text{WHITE} \\ -\text{Score}_{\text{White}}(S), & \text{if } \text{turn} = \text{BLACK} \end{cases}$$
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false}}}%%
 flowchart LR
     classDef state fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
     classDef white fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
@@ -136,8 +137,8 @@ flowchart LR
     classDef out fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
 
     subgraph Extract["Single-Pass 81-Square Loop Fusion"]
-        S["FastState (byte[81])"]:::state --> W["WhiteHeuristics.evalWhite()<br/>(12 terms: Escapes, SAFE_FORKS, Shield)"]:::white
-        S --> B["BlackHeuristics.evalBlack()<br/>(12 terms: Rhombus, Chains, Swarm)"]:::black
+        S["FastState (byte[81])"]:::state --> W["WhiteHeuristics.evalWhite()\n(12 terms: Escapes, SAFE_FORKS, Shield)"]:::white
+        S --> B["BlackHeuristics.evalBlack()\n(12 terms: Rhombus, Chains, Swarm)"]:::black
     end
 
     subgraph Combine["Zero-Sum Linear Differential"]

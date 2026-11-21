@@ -124,6 +124,7 @@ public final class UndoInfo {
 A single orthogonal move in Ashton Tablut can capture at most 3 enemy pieces simultaneously (one along the movement ray and two laterally against perpendicular anvils). An array size of 3 covers all legal board configurations without dynamic reallocation.
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false}}}%%
 flowchart TD
     classDef fwd fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
     classDef rec fill:#3b0764,stroke:#a855f7,color:#f3e8ff,stroke-width:1.5px
@@ -135,8 +136,8 @@ flowchart TD
         B --> C["Mutate board[to] = board[from]; board[from] = EMPTY"]:::fwd
         C --> D["Incremental XOR Zobrist update for moved piece"]:::fwd
         D --> E{"Active Custodian Captures?"}:::dec
-        E -- "Yes (up to 3)" --> F["Remove pawns &amp; log in undo.capturedSquares[0..2]"]:::fwd
-        E -- "No" --> G["Toggle state.turn &amp; XOR BLACK_TURN_KEY"]:::fwd
+        E -- "Yes (up to 3)" --> F["Remove pawns & log in undo.capturedSquares[0..2]"]:::fwd
+        E -- "No" --> G["Toggle state.turn & XOR BLACK_TURN_KEY"]:::fwd
         F --> G
     end
 
@@ -147,7 +148,7 @@ flowchart TD
     subgraph Unwind["O(1) Rollback: unmakeMove(move, undo)"]
         H --> I["Restore board[from] = board[to]; board[to] = EMPTY"]:::undo
         I --> J["Reinsert captured pawns from undo.capturedSquares"]:::undo
-        J --> K["Restore kingSquare, turn &amp; exact oldZobristHash"]:::undo
+        J --> K["Restore kingSquare, turn & exact oldZobristHash"]:::undo
     end
 ```
 

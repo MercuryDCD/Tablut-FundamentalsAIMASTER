@@ -38,6 +38,7 @@ Ashton Tablut is an asymmetric $9 \times 9$ strategy game played between two une
 How does the DajeGeppetto agent choose its moves in a tournament match?
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false}}}%%
 flowchart TD
     classDef io fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
     classDef fast fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
@@ -45,32 +46,32 @@ flowchart TD
     classDef eval fill:#3b0764,stroke:#a855f7,color:#f3e8ff,stroke-width:1.5px
     classDef decision fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
 
-    State["TCP Board State from Referee Server"]:::io --> FastPath{"O(1) Mate / Escape or<br/>Opening Book Hit?"}:::decision
+    State["TCP Board State from Referee Server"]:::io --> FastPath{"O(1) Mate / Escape or\nOpening Book Hit?"}:::decision
 
     subgraph Fast["Zero-Latency Fast Path (< 5 ms)"]
-        FastPath -- "Forced Mate / Escape" --> Cutoff["TacticalCutoffs<br/>(Analytic 1-Ply Win / 2-Ply Fork)"]:::fast
-        FastPath -- "Turn <= 6 Book Hit" --> BookLookup["OpeningBook: Global D4 Scan<br/>(29 Systems, ε = 0.0, < 0.01 ms)"]:::fast
+        FastPath -- "Forced Mate / Escape" --> Cutoff["TacticalCutoffs\n(Analytic 1-Ply Win / 2-Ply Fork)"]:::fast
+        FastPath -- "Turn <= 6 Book Hit" --> BookLookup["OpeningBook: Global D4 Scan\n(29 Systems, ε = 0.0, < 0.01 ms)"]:::fast
     end
 
     subgraph Core["Multi-Core Search Core (4 vCPUs · Lazy SMP)"]
-        FastPath -- "Search Required" --> IDS["Iterative Deepening Search<br/>(Depth 1..18 @ 60s · Aspiration Δ=120)"]:::search
-        IDS --> SMP["4-Thread Lazy SMP Pool<br/>(Depth Staggering + Root Permutations)"]:::search
-        SMP <--> TT[("2-Slot Lockless TT (134 MB)<br/>VarHandle Opaque + Hyatt XOR")]:::search
-        SMP --> MoveOrder["Lazy Move Ordering Cascade<br/>(TT > Wins > Captures > Killers > History)"]:::search
-        MoveOrder --> PVS["PVS + King-Guarded LMR<br/>+ Singular Extensions"]:::search
+        FastPath -- "Search Required" --> IDS["Iterative Deepening Search\n(Depth 1..18 @ 60s · Aspiration Δ=120)"]:::search
+        IDS --> SMP["4-Thread Lazy SMP Pool\n(Depth Staggering + Root Permutations)"]:::search
+        SMP <--> TT[("2-Slot Lockless TT (134 MB)\nVarHandle Opaque + Hyatt XOR")]:::search
+        SMP --> MoveOrder["Lazy Move Ordering Cascade\n(TT > Wins > Captures > Killers > History)"]:::search
+        MoveOrder --> PVS["PVS + King-Guarded LMR\n+ Singular Extensions"]:::search
     end
 
     subgraph Leaf["Leaf Stability & Time Control"]
         PVS --> LeafCheck{"Leaf Node?"}:::decision
-        LeafCheck -- "Captures / Escapes" --> Quiescence["Quiescence Search<br/>(Dynamic Delta Margin + Escape Ext)"]:::eval
-        LeafCheck -- "Quiet Position" --> Eval["24-Weight Linear Evaluator<br/>(30.9M evals/s + Zero-Centered Contempt)"]:::eval
+        LeafCheck -- "Captures / Escapes" --> Quiescence["Quiescence Search\n(Dynamic Delta Margin + Escape Ext)"]:::eval
+        LeafCheck -- "Quiet Position" --> Eval["24-Weight Linear Evaluator\n(30.9M evals/s + Zero-Centered Contempt)"]:::eval
         Quiescence --> Eval
-        Eval --> TimeCheck{"82% Soft Cutoff or<br/>96% Hard Deadline?"}:::decision
+        Eval --> TimeCheck{"82% Soft Cutoff or\n96% Hard Deadline?"}:::decision
     end
 
     TimeCheck -- "Time Remaining" --> IDS
-    TimeCheck -- "Stop (Partial-Depth Adoption)" --> BestWorker["isBetterWorkerResult()<br/>(Forced-Loss Protected)"]:::search
-    BestWorker --> SendMove["Transmit Action JSON &amp; Park Threads (0% CPU)"]:::io
+    TimeCheck -- "Stop (Partial-Depth Adoption)" --> BestWorker["isBetterWorkerResult()\n(Forced-Loss Protected)"]:::search
+    BestWorker --> SendMove["Transmit Action JSON & Park Threads (0% CPU)"]:::io
     Cutoff --> SendMove
     BookLookup --> SendMove
 ```
