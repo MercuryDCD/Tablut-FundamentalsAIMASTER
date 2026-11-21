@@ -125,7 +125,9 @@ $$\text{Score}_{\text{White}}(S) = \sum_{i=1}^{12} w_{w,i} \cdot f_{w,i}(S) - \s
 
 To conform to the Negamax convention (where the score is always expressed relative to the player whose turn it is to move):
 
-$$\text{Evaluate}(S) = \begin{cases} +\text{Score}_{\text{White}}(S), & \text{if } \text{turn} = \text{WHITE} \\ -\text{Score}_{\text{White}}(S), & \text{if } \text{turn} = \text{BLACK} \end{cases}$$
+$$
+\text{Evaluate}(S) = \begin{cases} +\text{Score}_{\text{White}}(S), & \text{if } \text{turn} = \text{WHITE} \\ -\text{Score}_{\text{White}}(S), & \text{if } \text{turn} = \text{BLACK} \end{cases}
+$$
 
 ```mermaid
 ---

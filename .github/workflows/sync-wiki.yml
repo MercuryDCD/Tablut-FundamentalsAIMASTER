@@ -41,9 +41,8 @@ jobs:
               if os.path.isfile(asset):
                   shutil.copy2(asset, os.path.join(assets_dst, os.path.basename(asset)))
 
-          # Detect default branch of the wiki repo (master or main)
-          branch = os.popen(f"git -C {wiki_dir} rev-parse --abbrev-ref HEAD").read().strip() or "master"
-          raw_assets = f"https://raw.githubusercontent.com/wiki/{repo}/{branch}/assets/"
+          # Raw wiki asset URLs omit the branch segment on GitHub
+          raw_assets = f"https://raw.githubusercontent.com/wiki/{repo}/assets/"
 
           # Copy and adapt Markdown pages
           sidebar_entries = ["### Tablut AI Engine", "", "* [[Home]]"]

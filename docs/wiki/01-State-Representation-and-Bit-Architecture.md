@@ -210,7 +210,9 @@ public static final long BLACK_TURN_KEY;
 ### 5.2 $O(1)$ Incremental Updates
 When a piece moves from square $u$ to square $v$, the hash is updated with three XOR operations:
 
-$$\text{Hash}' = \text{Hash} \oplus \text{Key}(P, u) \oplus \text{Key}(P, v) \oplus \text{BLACK\_TURN\_KEY}$$
+$$
+\text{Hash}' = \text{Hash} \oplus \text{Key}(P, u) \oplus \text{Key}(P, v) \oplus \text{BlackTurnKey}
+$$
 
 If the move captures an enemy pawn at square $c$:
 
