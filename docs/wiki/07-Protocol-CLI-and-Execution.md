@@ -123,21 +123,25 @@ $$\text{timeSafetyRatio} = 0.96$$
 At `60s/move`, the search uses up to **57.6 seconds** per full move (and exits in **0–6 ms** whenever an $O(1)$ or forced mate/escape is detected), empirically certified with zero timeout forfeits across all official 60s matches.
 
 ```mermaid
-%%{init: {"flowchart": {"htmlLabels": false}}}%%
+---
+config:
+  flowchart:
+    wrappingWidth: 600
+---
 flowchart LR
     classDef ok fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
     classDef warn fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
     classDef stop fill:#7f1d1d,stroke:#ef4444,color:#fee2e2,stroke-width:1.5px
     classDef adopt fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
 
-    Start["0% — Start IDS\n(allocated = 0.96 × T)"]:::ok --> Mid["Depth d Completed\nUpdate dynamic b_eff = clamp(2.2, 4.5, T_d / T_{d-1})"]:::ok
-    Mid --> Soft{"Elapsed >= 82% AND\nElapsed + 0.50·T_d·b_eff > allocated?"}:::warn
-    Soft -- "No" --> NextD["Launch Depth d + 1\n(Poll clock every 4096 nodes)"]:::adopt
-    Soft -- "Yes (Tier 1 Soft Cutoff)" --> ReturnPrev["Return Completed Depth d Move"]:::ok
-    NextD --> Hard{"96% Hard Deadline Hit?"}:::stop
+    Start["0% Start IDS\nalloc = 0.96*T"]:::ok --> Mid["Depth d Done\nUpdate b_eff\nin [2.2, 4.5]"]:::ok
+    Mid --> Soft{"Elapsed>=82% &\nProj > alloc?"}:::warn
+    Soft -- "No" --> NextD["Depth d + 1\nPoll /4096"]:::adopt
+    Soft -- "Tier 1 Stop" --> ReturnPrev["Return Depth d\nBest Move"]:::ok
+    NextD --> Hard{"96% Hard\nDeadline Hit?"}:::stop
     Hard -- "No" --> Mid
-    Hard -- "Yes (Tier 2 Hard Stop)" --> Partial{"rootMoves[0] Done &\nIn-Window Non-Hanging Improvement?"}:::warn
-    Partial -- "Yes (Phase 17 Adoption)" --> ReturnPartial["Adopt Verified Depth d+1 Move"]:::adopt
+    Hard -- "Tier 2 Stop" --> Partial{"root[0] Done &\nSafe Gain?"}:::warn
+    Partial -- "Yes" --> ReturnPartial["Adopt Partial\nDepth d+1 Move"]:::adopt
     Partial -- "No" --> ReturnPrev
 ```
 

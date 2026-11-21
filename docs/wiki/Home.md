@@ -66,7 +66,11 @@ The engine relies on a modular, zero-allocation design optimized for cache local
 | **Development Status** | **Tournament-Certified Release (Phase 17):** Frozen Java engine + Depth-5/6 CRN SPSA weights (`38,668` self-play games), 12/12 Java test suites passing | Submission-ready for UNIBO VM |
 
 ```mermaid
-%%{init: {"flowchart": {"htmlLabels": false}}}%%
+---
+config:
+  flowchart:
+    wrappingWidth: 600
+---
 flowchart TD
     classDef io fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
     classDef fast fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
@@ -74,23 +78,23 @@ flowchart TD
     classDef eval fill:#3b0764,stroke:#a855f7,color:#f3e8ff,stroke-width:1.5px
     classDef decision fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
 
-    A["Referee TCP Stream\n(Port 5800 / 5801)"]:::io --> B["TablutAgentClient\n(4-Byte Big-Endian I/O)"]:::io
-    B --> C["StateAdapter\n(JSON -> FastState)"]:::io
-    C --> TC["TacticalCutoffs\n(O(1) Instant Mate / 2-Ply Fork)"]:::fast
-    TC -- "No Forced Cutoff" --> D["ParallelSearchEngine\n(4-vCPU Lazy SMP Coordinator)"]:::search
+    A["Referee TCP\nPort 5800/5801"]:::io --> B["Agent Client\n4-Byte Framing"]:::io
+    B --> C["StateAdapter\nJSON -> State"]:::io
+    C --> TC["TacticalCutoff\nO(1) Mate/Fork"]:::fast
+    TC -- "No Forced Win" --> D["ParallelEngine\n4-vCPU SMP"]:::search
 
     subgraph Pipeline["Decision & Search Pipeline"]
-        D --> E{"OpeningBook Probe\n(Global D4 Scan)"}:::decision
-        E -- "Hit (Turns 1..6)" --> F["Instant D4 Move\n(< 0.01 ms, ε = 0.0)"]:::fast
-        E -- "Miss" --> G["Iterative Deepening Search\n(PVS + LMR + Singular Ext)"]:::search
-        G --> H["MoveOrderer\n(TT > Win > Capture > Killer > History)"]:::search
-        H --> I["FastState\n(byte[81] Make / Unmake)"]:::search
-        I <--> J[("TranspositionTable\n2-Slot Bucket · VarHandle XOR · 134 MB")]:::search
-        G --> K["QuiescenceSearch\n(Dynamic Delta + Escape Ext)"]:::eval
-        K --> L["HeuristicEvaluation\n(24 SPSA Weights · Single-Pass Fusion)"]:::eval
+        D --> E{"OpeningBook\nD4 Probe?"}:::decision
+        E -- "Book Hit" --> F["Instant D4\n<0.01ms · ε=0"]:::fast
+        E -- "Miss" --> G["IDS Search\nPVS + LMR"]:::search
+        G --> H["MoveOrderer\nTT>Win>Cap>Kil"]:::search
+        H --> I["FastState\nbyte[81] Undo"]:::search
+        I <--> J[("2-Slot TT\n134MB Lockless\nVarHandle XOR")]:::search
+        G --> K["Quiescence\nDelta + Escape"]:::eval
+        K --> L["HeuristicEval\n24 Weights\n1-Pass Fusion"]:::eval
     end
 
-    TC -- "Forced Win (< 5 ms)" --> M["Action Dispatch & Park Threads (0% CPU)"]:::io
+    TC -- "Win (< 5 ms)" --> M["Send Action\nPark (0% CPU)"]:::io
     F --> M
     G --> M
     M --> A

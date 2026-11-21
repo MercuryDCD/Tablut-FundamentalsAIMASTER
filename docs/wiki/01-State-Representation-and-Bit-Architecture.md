@@ -124,7 +124,11 @@ public final class UndoInfo {
 A single orthogonal move in Ashton Tablut can capture at most 3 enemy pieces simultaneously (one along the movement ray and two laterally against perpendicular anvils). An array size of 3 covers all legal board configurations without dynamic reallocation.
 
 ```mermaid
-%%{init: {"flowchart": {"htmlLabels": false}}}%%
+---
+config:
+  flowchart:
+    wrappingWidth: 600
+---
 flowchart TD
     classDef fwd fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
     classDef rec fill:#3b0764,stroke:#a855f7,color:#f3e8ff,stroke-width:1.5px
@@ -132,23 +136,23 @@ flowchart TD
     classDef dec fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
 
     subgraph Forward["Traversing Forward: makeMove(move, undo)"]
-        A["Reset preallocated UndoInfo at current ply"]:::fwd --> B["Save oldTurn, oldKingSquare, oldZobristHash"]:::fwd
-        B --> C["Mutate board[to] = board[from]; board[from] = EMPTY"]:::fwd
-        C --> D["Incremental XOR Zobrist update for moved piece"]:::fwd
-        D --> E{"Active Custodian Captures?"}:::dec
-        E -- "Yes (up to 3)" --> F["Remove pawns & log in undo.capturedSquares[0..2]"]:::fwd
-        E -- "No" --> G["Toggle state.turn & XOR BLACK_TURN_KEY"]:::fwd
+        A["Reset UndoInfo\nat current ply"]:::fwd --> B["Save Turn,\nKingSq, Hash"]:::fwd
+        B --> C["board[to]=p\nboard[from]=0"]:::fwd
+        C --> D["XOR Zobrist\nmoved piece"]:::fwd
+        D --> E{"Custodian\nCaptures?"}:::dec
+        E -- "Yes (0..3)" --> F["Remove Pawns\nLog UndoInfo"]:::fwd
+        E -- "No" --> G["Flip Turn\nXOR TURN_KEY"]:::fwd
         F --> G
     end
 
     subgraph Recursion["Recursive Tree Search"]
-        G --> H["negamax(depth - 1, -beta, -alpha, ply + 1)"]:::rec
+        G --> H["negamax(d-1,\n-b, -a, ply+1)"]:::rec
     end
 
     subgraph Unwind["O(1) Rollback: unmakeMove(move, undo)"]
-        H --> I["Restore board[from] = board[to]; board[to] = EMPTY"]:::undo
-        I --> J["Reinsert captured pawns from undo.capturedSquares"]:::undo
-        J --> K["Restore kingSquare, turn & exact oldZobristHash"]:::undo
+        H --> I["Restore board\nfrom UndoInfo"]:::undo
+        I --> J["Reinsert Pawns\nfrom UndoInfo"]:::undo
+        J --> K["Restore KingSq\nTurn & Hash"]:::undo
     end
 ```
 

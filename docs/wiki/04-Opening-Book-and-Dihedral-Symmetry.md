@@ -40,7 +40,11 @@ For each square $\text{sq} = r \times 9 + c$:
 | **7** | **Anti-Diagonal Reflection** | $(8 - c, 8 - r)$ |
 
 ```mermaid
-%%{init: {"flowchart": {"htmlLabels": false}}}%%
+---
+config:
+  flowchart:
+    wrappingWidth: 600
+---
 flowchart TD
     classDef state fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
     classDef sym fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
@@ -48,20 +52,20 @@ flowchart TD
     classDef dec fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
     classDef fast fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
 
-    RawState["Active Board State (S)"]:::state --> Loop["Iterate k = 0 .. 7 across all D4 Symmetries"]:::sym
+    RawState["Board State S"]:::state --> Loop["Loop k = 0..7\nD4 Symmetries"]:::sym
 
     subgraph D4["Precomputed TRANSFORM[k][sq] Lookup"]
-        Loop --> Rot["4 Rotations: 0°, 90°, 180°, 270°"]:::sym
-        Loop --> Ref["4 Reflections: Horiz, Vert, Main Diag, Anti-Diag"]:::sym
+        Loop --> Rot["4 Rotations\n0/90/180/270"]:::sym
+        Loop --> Ref["4 Reflections\nH, V, D1, D2"]:::sym
     end
 
-    Rot --> HashCalc["Compute Zobrist Hash_k & Probe Book Table"]:::probe
+    Rot --> HashCalc["Zobrist Hash_k\nProbe Book"]:::probe
     Ref --> HashCalc
 
-    HashCalc --> BestScan{"Global Best-Weight Match\nacross all 8 Orientations?"}:::dec
-    BestScan -- "Hit (Phase 16 Global Scan)" --> MapBack["Project Canonical Move via\nINVERSE_TRANSFORM[bestSym]"]:::fast
-    MapBack --> BestMove["Execute Deterministic Reply (ε = 0.0) in < 0.01 ms"]:::fast
-    BestScan -- "Miss" --> Fallback["Fallback to 4-vCPU Lazy SMP Search"]:::state
+    HashCalc --> BestScan{"Global Match\nin 8 Views?"}:::dec
+    BestScan -- "Hit (D4 Scan)" --> MapBack["Map Move via\nINV_TRANS[k]"]:::fast
+    MapBack --> BestMove["Reply (ε=0.0)\nin < 0.01 ms"]:::fast
+    BestScan -- "Miss" --> Fallback["4-vCPU Lazy\nSMP Search"]:::state
 ```
 
 ### 1.2 Memory Compression & State Normalization

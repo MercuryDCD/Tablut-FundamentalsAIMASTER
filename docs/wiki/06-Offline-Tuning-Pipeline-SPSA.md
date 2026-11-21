@@ -34,7 +34,11 @@ Playing $N = 100$ games per evaluation would require 4,400 games just to take a 
 SPSA estimates the entire $p$-dimensional gradient vector using only **two evaluations**, regardless of how many parameters are being tuned:
 
 ```mermaid
-%%{init: {"flowchart": {"htmlLabels": false}}}%%
+---
+config:
+  flowchart:
+    wrappingWidth: 600
+---
 flowchart TD
     classDef state fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
     classDef perturb fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
@@ -42,25 +46,25 @@ flowchart TD
     classDef gate fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
     classDef save fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
 
-    Start["Current Weight Vector: theta_k (24 params)"]:::state --> GenDelta["Sample Bernoulli Perturbation:\nDelta_k in {-1, +1}^p (Masked by Stage)"]:::perturb
-    GenDelta --> VectorPlus["theta_plus = theta_k + c_k * Delta_k"]:::perturb
-    GenDelta --> VectorMinus["theta_minus = theta_k - c_k * Delta_k"]:::perturb
+    Start["Weight Vector\ntheta_k (24)"]:::state --> GenDelta["Sample Delta_k\nin {-1, +1}^p"]:::perturb
+    GenDelta --> VectorPlus["theta_plus =\ntheta_k + c*D"]:::perturb
+    GenDelta --> VectorMinus["theta_minus =\ntheta_k - c*D"]:::perturb
 
     subgraph CRN["HeadlessTournament.java (Zero-Alloc ThreadLocal · Paired CRN Seeds)"]
-        VectorPlus --> SimPlus["N Paired Games (White/Black Swap)\ntheta_plus vs Incumbent (seed s_k)"]:::sim
-        VectorMinus --> SimMinus["N Paired Games (White/Black Swap)\ntheta_minus vs Incumbent (same seed s_k)"]:::sim
+        VectorPlus --> SimPlus["N Paired Games\ntheta_plus\n(seed s_k)"]:::sim
+        VectorMinus --> SimMinus["N Paired Games\ntheta_minus\n(seed s_k)"]:::sim
     end
 
-    SimPlus --> EvalPlus["y_plus = (W + 0.5*D) / Total\n+ winsABlack telemetry"]:::sim
-    SimMinus --> EvalMinus["y_minus = (W + 0.5*D) / Total\n+ winsABlack telemetry"]:::sim
+    SimPlus --> EvalPlus["y_plus =\n(W+0.5D)/Total\n+ winsABlack"]:::sim
+    SimMinus --> EvalMinus["y_minus =\n(W+0.5D)/Total\n+ winsABlack"]:::sim
 
-    EvalPlus --> GradCalc["Simultaneous Gradient:\ng_k = (y_plus - y_minus) / (2 * c_k * Delta_k)"]:::perturb
+    EvalPlus --> GradCalc["Gradient g_k =\n(y+ - y-) /\n(2 * c_k * D)"]:::perturb
     EvalMinus --> GradCalc
 
-    GradCalc --> Update["theta_{k+1} = theta_k + a_k * g_k\n& EMA Tracking"]:::perturb
-    Update --> Gate{"Black Non-Regression Gate\n(wr >= 0.52 & black_ok)?"}:::gate
-    Gate -- "Promoted" --> Checkpoint["Atomic Write-and-Rename:\nos.replace -> checkpoint_weights.json"]:::save
-    Gate -- "Keep Incumbent" --> NextIter["Increment k; Decay a_k, c_k"]:::state
+    GradCalc --> Update["theta_{k+1} =\ntheta_k + a*g\n+ EMA Track"]:::perturb
+    Update --> Gate{"Black Gate\nwr >= 0.52 &\nblack_ok?"}:::gate
+    Gate -- "Promoted" --> Checkpoint["Atomic Save\nweights.json"]:::save
+    Gate -- "Keep" --> NextIter["Next Iter k\nDecay a_k, c_k"]:::state
     Checkpoint --> NextIter
 ```
 

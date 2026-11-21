@@ -38,7 +38,11 @@ Ashton Tablut is an asymmetric $9 \times 9$ strategy game played between two une
 How does the DajeGeppetto agent choose its moves in a tournament match?
 
 ```mermaid
-%%{init: {"flowchart": {"htmlLabels": false}}}%%
+---
+config:
+  flowchart:
+    wrappingWidth: 600
+---
 flowchart TD
     classDef io fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
     classDef fast fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
@@ -46,32 +50,32 @@ flowchart TD
     classDef eval fill:#3b0764,stroke:#a855f7,color:#f3e8ff,stroke-width:1.5px
     classDef decision fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
 
-    State["TCP Board State from Referee Server"]:::io --> FastPath{"O(1) Mate / Escape or\nOpening Book Hit?"}:::decision
+    State["TCP Board\nState (JSON)"]:::io --> FastPath{"O(1) Win or\nBook Hit?"}:::decision
 
     subgraph Fast["Zero-Latency Fast Path (< 5 ms)"]
-        FastPath -- "Forced Mate / Escape" --> Cutoff["TacticalCutoffs\n(Analytic 1-Ply Win / 2-Ply Fork)"]:::fast
-        FastPath -- "Turn <= 6 Book Hit" --> BookLookup["OpeningBook: Global D4 Scan\n(29 Systems, ε = 0.0, < 0.01 ms)"]:::fast
+        FastPath -- "Forced Win" --> Cutoff["TacticalCutoff\n1-Ply / 2-Ply"]:::fast
+        FastPath -- "Turn <= 6 Hit" --> BookLookup["OpeningBook D4\n29 Systems\nε=0 · <0.01ms"]:::fast
     end
 
     subgraph Core["Multi-Core Search Core (4 vCPUs · Lazy SMP)"]
-        FastPath -- "Search Required" --> IDS["Iterative Deepening Search\n(Depth 1..18 @ 60s · Aspiration Δ=120)"]:::search
-        IDS --> SMP["4-Thread Lazy SMP Pool\n(Depth Staggering + Root Permutations)"]:::search
-        SMP <--> TT[("2-Slot Lockless TT (134 MB)\nVarHandle Opaque + Hyatt XOR")]:::search
-        SMP --> MoveOrder["Lazy Move Ordering Cascade\n(TT > Wins > Captures > Killers > History)"]:::search
-        MoveOrder --> PVS["PVS + King-Guarded LMR\n+ Singular Extensions"]:::search
+        FastPath -- "Search" --> IDS["Iterative\nDeepening\nDepth 1..18"]:::search
+        IDS --> SMP["4-Thread Pool\nLazy SMP\nDepth Stagger"]:::search
+        SMP <--> TT[("2-Slot TT\n134MB Lockless\nVarHandle XOR")]:::search
+        SMP --> MoveOrder["Lazy MoveOrder\nTT > Win > Cap\nKiller > Hist"]:::search
+        MoveOrder --> PVS["PVS + Guarded\nLMR + Singular\nExtensions"]:::search
     end
 
     subgraph Leaf["Leaf Stability & Time Control"]
         PVS --> LeafCheck{"Leaf Node?"}:::decision
-        LeafCheck -- "Captures / Escapes" --> Quiescence["Quiescence Search\n(Dynamic Delta Margin + Escape Ext)"]:::eval
-        LeafCheck -- "Quiet Position" --> Eval["24-Weight Linear Evaluator\n(30.9M evals/s + Zero-Centered Contempt)"]:::eval
+        LeafCheck -- "Tactical" --> Quiescence["Quiescence\nDynamic Delta\nEscape Ext"]:::eval
+        LeafCheck -- "Quiet" --> Eval["24-Weight Eval\n30.9M evals/s\nDraw Contempt"]:::eval
         Quiescence --> Eval
-        Eval --> TimeCheck{"82% Soft Cutoff or\n96% Hard Deadline?"}:::decision
+        Eval --> TimeCheck{"82% Soft or\n96% Hard Stop?"}:::decision
     end
 
-    TimeCheck -- "Time Remaining" --> IDS
-    TimeCheck -- "Stop (Partial-Depth Adoption)" --> BestWorker["isBetterWorkerResult()\n(Forced-Loss Protected)"]:::search
-    BestWorker --> SendMove["Transmit Action JSON & Park Threads (0% CPU)"]:::io
+    TimeCheck -- "Continue" --> IDS
+    TimeCheck -- "Stop" --> BestWorker["Best Worker\nForced-Loss\nProtected"]:::search
+    BestWorker --> SendMove["Send JSON Move\nPark (0% CPU)"]:::io
     Cutoff --> SendMove
     BookLookup --> SendMove
 ```
@@ -107,9 +111,9 @@ Rather than treating AI algorithms as black boxes, each component in DajeGeppett
 * **The Result:** The agent plays opening moves in **< 0.01 ms**, saving 100% of its time budget for the complex middlegame.
 
 ### 3.6 Parameterized Linear Heuristics & Depth-5/6 CRN SPSA Training
-* **The Problem:** On pure 4-vCPU hardware without GPU acceleration, heavy neural evaluators throttle search depth, whereas linear bitwise heuristics allow reaching **Depth 13–18** (100M–340M nodes/move at 60s), resolving multi-ply forced mates and escape forks cleanly.
+* **The Problem:** Running on pure 4-vCPU hardware without GPU acceleration requires an evaluation function fast enough to sustain deep search (**Depth 13–18**, 100M–340M nodes/move at 60s) and resolve multi-ply forced mates and escape forks cleanly.
 * **The Solution:** We engineered **24 domain-specific features** (escape corridors, 2-way forks, `SAFE_FORKS`, Rhombus blockades with White Rhombus-contest exemption, camp preservation, graduated Throne-abandon protection, shield cohesion, zero-centered draw contempt, and open-field swarm pressure) running at **30.9 million evaluations/sec**.
-* **Multi-Stage CRN SPSA Tuning:** Using **Common Random Numbers (CRN)** paired evaluation, Black non-regression gating, and a 4-stage Depth-5/6 pipeline (`scripts/overnight_60s_pipeline.py`), the active weights were distilled from 38,668 deep self-play games and validated via multi-resolution shootouts (Depth 5, 750ms, 1200ms).
+* **Multi-Stage CRN SPSA Tuning:** Using **Common Random Numbers (CRN)** paired evaluation, Black non-regression gating, and a 4-stage Depth-5/6 pipeline (`scripts/overnight_60s_pipeline.py`), the active weights were distilled from 38,668 self-play games.
 
 <p align="center">
   <img src="docs/assets/spsa_pipeline.svg" alt="Phase 17 Multi-Stage Depth-5/6 CRN SPSA Curriculum and Engine KPIs" width="100%"/>
@@ -155,16 +159,12 @@ Launch the agent conforming to the official UNIBO tournament specification:
 ### 5.4 Verification, Testing & Offline SPSA Training
 * **Automated Pre-Submission Certification (Local Windows / Official Debian VM):**
   ```powershell
-  # Local certification (UTF-8 clean build, 8 core test suites, LF check, RandomPlayer smoke match)
+  # Local certification (UTF-8 clean build, core test suites, LF check, protocol smoke test)
   powershell -ExecutionPolicy Bypass -File scripts/verify_local.ps1
   ```
   ```bash
   # Inside the official Debian VM (/home/tablut/tablut)
   ./scripts/verify_vm.sh
-  ```
-* **Single Local Match vs Baseline `RandomPlayer` (`Server.jar`):**
-  ```powershell
-  .\scripts\match_official.ps1 -Role WHITE -Opponent RANDOM -Timeout 60
   ```
 * **Multi-Stage Depth-5/6 Offline SPSA Training Pipeline:**
   ```powershell

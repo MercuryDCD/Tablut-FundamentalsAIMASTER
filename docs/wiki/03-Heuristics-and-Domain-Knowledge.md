@@ -128,7 +128,11 @@ To conform to the Negamax convention (where the score is always expressed relati
 $$\text{Evaluate}(S) = \begin{cases} +\text{Score}_{\text{White}}(S), & \text{if } \text{turn} = \text{WHITE} \\ -\text{Score}_{\text{White}}(S), & \text{if } \text{turn} = \text{BLACK} \end{cases}$$
 
 ```mermaid
-%%{init: {"flowchart": {"htmlLabels": false}}}%%
+---
+config:
+  flowchart:
+    wrappingWidth: 600
+---
 flowchart LR
     classDef state fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
     classDef white fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
@@ -137,19 +141,19 @@ flowchart LR
     classDef out fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
 
     subgraph Extract["Single-Pass 81-Square Loop Fusion"]
-        S["FastState (byte[81])"]:::state --> W["WhiteHeuristics.evalWhite()\n(12 terms: Escapes, SAFE_FORKS, Shield)"]:::white
-        S --> B["BlackHeuristics.evalBlack()\n(12 terms: Rhombus, Chains, Swarm)"]:::black
+        S["FastState\nbyte[81]"]:::state --> W["WhiteHeuristic\n12 Terms\nSAFE_FORKS"]:::white
+        S --> B["BlackHeuristic\n12 Terms\nRhombus/Swarm"]:::black
     end
 
     subgraph Combine["Zero-Sum Linear Differential"]
-        W --> W_Score["W = dot(w_white, f_white)"]:::white
-        B --> B_Score["B = dot(w_black, f_black)"]:::black
+        W --> W_Score["W = w·f_white"]:::white
+        B --> B_Score["B = w·f_black"]:::black
         W_Score --> Diff["Delta = W - B"]:::math
         B_Score --> Diff
     end
 
     subgraph Negamax["Negamax Polarity"]
-        Diff --> Polarity{"state.turn == WHITE?"}:::math
+        Diff --> Polarity{"turn == WHITE?"}:::math
         Polarity -- "Yes" --> RetWhite["Return +Delta"]:::out
         Polarity -- "No" --> RetBlack["Return -Delta"]:::out
     end

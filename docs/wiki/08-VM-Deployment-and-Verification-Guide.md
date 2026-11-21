@@ -5,18 +5,22 @@ This guide provides the complete, step-by-step procedure for importing, configur
 Following this runbook guarantees that the agent satisfies all official tournament regulations set by the University of Bologna course staff, preventing automatic disqualification due to runtime failures, network dependencies, illegal moves, timeout forfeits, or disk saturation.
 
 ```mermaid
-%%{init: {"flowchart": {"htmlLabels": false}}}%%
+---
+config:
+  flowchart:
+    wrappingWidth: 600
+---
 flowchart LR
     classDef step fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
     classDef check fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
     classDef clean fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
     classDef ship fill:#3b0764,stroke:#a855f7,color:#f3e8ff,stroke-width:1.5px
 
-    S1["1. Deploy to\n/home/tablut/tablut"]:::step --> S2["2. UTF-8 Build &\nPOSIX LF Sanitize"]:::step
-    S2 --> S3["3. ./scripts/verify_vm.sh\n(Core Suites + Smoke Match)"]:::check
-    S3 --> S4["4. 10-Invariant Audit\n(Offline · 0% CPU · 12 Suites)"]:::check
-    S4 --> S5["5. ./scripts/clean_vm.sh\n& Power Off VM"]:::clean
-    S5 --> S6["6. Export .ova + SHA-256\n& Submit on Virtuale"]:::ship
+    S1["1. Deploy to\n/home/tablut"]:::step --> S2["2. UTF-8 Build\n& LF Sanitize"]:::step
+    S2 --> S3["3. verify_vm\nCore + Smoke"]:::check
+    S3 --> S4["4. 10-Rule\nAudit (12/12)"]:::check
+    S4 --> S5["5. clean_vm.sh\n& Power Off"]:::clean
+    S5 --> S6["6. Export .ova\n& SHA-256"]:::ship
 ```
 
 ---

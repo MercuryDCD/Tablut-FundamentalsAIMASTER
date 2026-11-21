@@ -17,20 +17,24 @@ Parallelizing alpha-beta search on shared-memory multi-core systems is tradition
    All available worker threads execute independent Iterative Deepening Searches starting from the root position. The threads do not communicate directly, do not pass messages, and do not lock tree nodes. Instead, they interact exclusively by reading and writing to a single, globally shared **Transposition Table**.
 
 ```mermaid
-%%{init: {"flowchart": {"htmlLabels": false}}}%%
+---
+config:
+  flowchart:
+    wrappingWidth: 600
+---
 flowchart TD
     classDef coord fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1.5px
     classDef worker fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
     classDef tt fill:#064e3b,stroke:#10b981,color:#ecfdf5,stroke-width:1.5px
     classDef merge fill:#451a03,stroke:#f59e0b,color:#fef3c7,stroke-width:1.5px
 
-    Coord["ParallelSearchEngine Coordinator\n(4 vCPUs · Shared volatile stopped Flag)"]:::coord
+    Coord["ParallelEngine\nCoordinator\nvolatile stop"]:::coord
 
     subgraph Workers["Diversified Lazy SMP Worker Pool"]
-        W0["Master Thread 0\nIDS: d = 1, 2, 3...\nRoot Order: (i + 0) mod N"]:::worker
-        W1["Helper Thread 1\nIDS: d = 2, 3, 4...\nRoot Order: (i + 1) mod N"]:::worker
-        W2["Helper Thread 2\nIDS: d = 1, 2, 3...\nRoot Order: (i + 2) mod N"]:::worker
-        W3["Helper Thread 3\nIDS: d = 2, 3, 4...\nRoot Order: (i + 3) mod N"]:::worker
+        W0["Thread 0\nIDS d=1,2,3...\nOrder (i+0)%N"]:::worker
+        W1["Thread 1\nIDS d=2,3,4...\nOrder (i+1)%N"]:::worker
+        W2["Thread 2\nIDS d=1,2,3...\nOrder (i+2)%N"]:::worker
+        W3["Thread 3\nIDS d=2,3,4...\nOrder (i+3)%N"]:::worker
     end
 
     Coord --> W0
@@ -38,18 +42,18 @@ flowchart TD
     Coord --> W2
     Coord --> W3
 
-    TT[("Global Lockless Transposition Table\n2²³ Entries (~134 MB) · 2-Slot Buckets\nVarHandle Opaque + Hyatt XOR")]:::tt
+    TT[("Global TT\n2^23 (134 MB)\n2-Slot Bucket\nVarHandle XOR")]:::tt
 
     W0 <--> TT
     W1 <--> TT
     W2 <--> TT
     W3 <--> TT
 
-    W0 --> Join["chooseBestWorker() + isBetterWorkerResult()\n(Forced-Loss Protected · Partial-Depth Adoption)"]:::merge
+    W0 --> Join["chooseBest\nForced-Loss\nProtected"]:::merge
     W1 --> Join
     W2 --> Join
     W3 --> Join
-    Join --> Park["Join & Park All Threads -> 0.0% CPU on Opponent Turn"]:::coord
+    Join --> Park["Join & Park\n0% CPU Idle"]:::coord
 ```
 
 ### 1.1 Why Lazy SMP Wins
@@ -115,7 +119,11 @@ if ((lock ^ data) == zobristHash) {
 If a concurrent thread overwrites `tableData[index]` during a read, the relationship `(lock ^ data) == zobristHash` breaks with near certainty (collision probability $2^{-64}$). The read simply registers as a harmless cache miss. The thread falls back to computing the search branch normally, avoiding corrupted evaluations without requiring mutex locks.
 
 ```mermaid
-%%{init: {"flowchart": {"htmlLabels": false}}}%%
+---
+config:
+  flowchart:
+    wrappingWidth: 600
+---
 flowchart TD
     classDef write fill:#1e3a5f,stroke:#38bdf8,color:#e0f2fe,stroke-width:1.5px
     classDef mem fill:#3b0764,stroke:#a855f7,color:#f3e8ff,stroke-width:1.5px
@@ -125,26 +133,26 @@ flowchart TD
     classDef miss fill:#7f1d1d,stroke:#ef4444,color:#fee2e2,stroke-width:1.5px
 
     subgraph Writer["Thread 0 (Lockless Writer)"]
-        W1["Compute zobristHash & pack 64-bit tableData"]:::write --> W2["DATA_VH.setOpaque(tableData, slotIdx, data)"]:::write
-        W2 --> W3["LOCK_VH.setOpaque(tableLocks, slotIdx, zobristHash ^ data)"]:::write
+        W1["Pack 64-bit\ntableData"]:::write --> W2["DATA_VH\n.setOpaque()"]:::write
+        W2 --> W3["LOCK_VH\n.setOpaque()"]:::write
     end
 
     subgraph Shared["Shared Heap Arrays (Zero Locks · 134 MB)"]
-        TableData[("tableData[2²³]")]:::mem
-        TableLocks[("tableLocks[2²³]")]:::mem
+        TableData[("tableData\n[2^23]")]:::mem
+        TableLocks[("tableLocks\n[2^23]")]:::mem
         W2 -. "Opaque Write" .-> TableData
         W3 -. "Opaque Write" .-> TableLocks
     end
 
     subgraph Reader["Thread 1 (Lockless Reader: Slot 0 -> Slot 1)"]
-        P1["data = DATA_VH.getOpaque(slotIdx)"]:::read
-        P2["lock = LOCK_VH.getOpaque(slotIdx)"]:::read
+        P1["data =\ngetOpaque()"]:::read
+        P2["lock =\ngetOpaque()"]:::read
         TableData -. "Opaque Read" .-> P1
         TableLocks -. "Opaque Read" .-> P2
-        P1 --> Check{"(lock ^ data) == zobristHash?"}:::dec
+        P1 --> Check{"(lock ^ data)\n== hash?"}:::dec
         P2 --> Check
-        Check -- "True (Consistent)" --> Valid["Cache HIT: Extract Move, Score, Depth, Flags"]:::hit
-        Check -- "False (Torn Read / Collision)" --> Miss["Harmless MISS: Probe Slot 1 or Search Normally"]:::miss
+        Check -- "Consistent" --> Valid["Cache HIT\nMove, Score,\nDepth, Flags"]:::hit
+        Check -- "Torn/Miss" --> Miss["Harmless MISS\nProbe Slot 1"]:::miss
     end
 ```
 
