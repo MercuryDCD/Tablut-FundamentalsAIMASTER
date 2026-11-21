@@ -1,0 +1,92 @@
+name: Sync Docs to GitHub Wiki
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/wiki/**"
+      - "docs/assets/**"
+      - ".github/workflows/sync-wiki.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout Wiki repository
+        run: |
+          git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki_repo
+
+      - name: Sync docs/wiki and docs/assets into Wiki
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'EOF'
+          import glob, os, re, shutil
+
+          repo = os.environ["REPO"]
+          wiki_dir = "wiki_repo"
+          assets_dst = os.path.join(wiki_dir, "assets")
+          os.makedirs(assets_dst, exist_ok=True)
+
+          # Copy SVG/image assets into the wiki repo
+          for asset in glob.glob("docs/assets/*"):
+              if os.path.isfile(asset):
+                  shutil.copy2(asset, os.path.join(assets_dst, os.path.basename(asset)))
+
+          # Detect default branch of the wiki repo (master or main)
+          branch = os.popen(f"git -C {wiki_dir} rev-parse --abbrev-ref HEAD").read().strip() or "master"
+          raw_assets = f"https://raw.githubusercontent.com/wiki/{repo}/{branch}/assets/"
+
+          # Copy and adapt Markdown pages
+          sidebar_entries = ["### Tablut AI Engine", "", "* [[Home]]"]
+          md_files = sorted(glob.glob("docs/wiki/*.md"))
+          page_names = {os.path.basename(p)[:-3] for p in md_files}
+
+          for src in md_files:
+              fname = os.path.basename(src)
+              stem = fname[:-3]
+              with open(src, "r", encoding="utf-8") as f:
+                  text = f.read()
+
+              # Rewrite relative ../assets/ references to raw wiki asset URLs
+              text = text.replace("../assets/", raw_assets)
+
+              # Strip .md from internal wiki page links so GitHub Wiki renders HTML pages instead of raw text
+              def strip_md(m):
+                  target = m.group(1)
+                  return f"]({target[:-3]})" if target[:-3] in page_names else m.group(0)
+
+              text = re.sub(r"\]\(([^)#\s]+\.md)\)", strip_md, text)
+
+              with open(os.path.join(wiki_dir, fname), "w", encoding="utf-8", newline="\n") as f:
+                  f.write(text)
+
+              if stem != "Home":
+                  first_h1 = next((ln[2:].strip() for ln in text.splitlines() if ln.startswith("# ")), stem)
+                  title = first_h1.replace(" — ", ". ", 1)
+                  sidebar_entries.append(f"* [[{title}|{stem}]]")
+
+          with open(os.path.join(wiki_dir, "_Sidebar.md"), "w", encoding="utf-8", newline="\n") as f:
+              f.write("\n".join(sidebar_entries) + "\n")
+          EOF
+
+      - name: Commit and push Wiki changes
+        run: |
+          cd wiki_repo
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Wiki is already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "docs: sync wiki from docs/wiki (${{ github.sha }})"
+          git push origin HEAD
